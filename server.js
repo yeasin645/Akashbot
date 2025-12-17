@@ -6,6 +6,7 @@ const token = process.env.BOT_TOKEN;
 const myAppUrl = process.env.APP_URL;
 const bot = new TelegramBot(token, { polling: true });
 
+// সেটিংস ভেরিয়েবল
 let currentZoneId = process.env.ZONE_ID || '10341337';
 let requiredClicks = 3; 
 let channels = []; 
@@ -13,13 +14,14 @@ let channels = [];
 let posts = {};
 let userState = {};
 
+// ওয়েবসাইট রাউট
 app.get('/post/:id', (req, res) => {
     const post = posts[req.params.id];
     if (!post) return res.send("পোস্টটি পাওয়া যায়নি!");
     res.send(generateHTML(post, currentZoneId, requiredClicks, channels));
 });
 
-// HTML জেনারেটর ফাংশন
+// HTML জেনারেটর
 function generateHTML(post, zoneId, clicksCount, channelList) {
     let qualityButtons = "";
     post.links.forEach((item) => {
@@ -45,7 +47,7 @@ function generateHTML(post, zoneId, clicksCount, channelList) {
     <style>
         body { font-family: Arial, sans-serif; background: #f0f2f5; margin: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
         .card { width: 95%; max-width: 400px; background: white; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); overflow: hidden; text-align: center; padding-bottom: 20px; }
-        img { width: 100%; height: auto; display: block; border-bottom: 1px solid #eee; }
+        img { width: 100%; height: auto; display: block; }
         .content { padding: 15px; }
         .status { font-size: 14px; color: #d32f2f; margin-bottom: 15px; font-weight: bold; background: #ffebee; padding: 10px; border-radius: 8px; }
         .channel-box { background: #e3f2fd; padding: 10px; margin-bottom: 15px; border-radius: 10px; border: 1px dashed #2196f3; }
@@ -69,15 +71,20 @@ function generateHTML(post, zoneId, clicksCount, channelList) {
         const target = ${clicksCount};
         function startAd(targetUrl) {
             const zoneFunc = "show_" + "${zoneId}";
-            const stat = document.getElementById('stat-text');
             if (currentClicks < target) {
                 if (typeof window[zoneFunc] === 'function') {
                     window[zoneFunc]().then(() => {
                         currentClicks++;
-                        stat.innerText = "অ্যাড দেখা হয়েছে: " + currentClicks + "/" + target;
+                        document.getElementById('stat-text').innerText = "অ্যাড দেখা হয়েছে: " + currentClicks + "/" + target;
                         if(currentClicks === target) alert("অ্যাড সম্পন্ন! আবার ক্লিক করুন।");
-                    }).catch(() => { currentClicks++; stat.innerText = "অ্যাড দেখা হয়েছে: " + currentClicks + "/" + target; });
-                } else { currentClicks++; stat.innerText = "অ্যাড দেখা হয়েছে: " + currentClicks + "/" + target; }
+                    }).catch(() => { 
+                        currentClicks++; 
+                        document.getElementById('stat-text').innerText = "অ্যাড দেখা হয়েছে: " + currentClicks + "/" + target; 
+                    });
+                } else { 
+                    currentClicks++; 
+                    document.getElementById('stat-text').innerText = "অ্যাড দেখা হয়েছে: " + currentClicks + "/" + target; 
+                }
             } else { window.location.href = targetUrl; }
         }
     </script>
@@ -85,7 +92,21 @@ function generateHTML(post, zoneId, clicksCount, channelList) {
 </html>`;
 }
 
-// কমান্ডসমূহ
+// কমান্ড হ্যান্ডলার
+bot.onText(/\/start/, (msg) => {
+    bot.sendMessage(msg.chat.id, "স্বাগতম! মুভি পোস্ট তৈরি করতে /post লিখুন। সেটিংসের জন্য /setzone, /setclicks বা /setchannels ব্যবহার করুন।");
+});
+
+bot.onText(/\/setzone (.+)/, (msg, match) => {
+    currentZoneId = match[1].trim();
+    bot.sendMessage(msg.chat.id, `✅ জোন আইডি সেট হয়েছে: ${currentZoneId}`);
+});
+
+bot.onText(/\/setclicks (\d+)/, (msg, match) => {
+    requiredClicks = parseInt(match[1]);
+    bot.sendMessage(msg.chat.id, `✅ অ্যাড সংখ্যা সেট হয়েছে: ${requiredClicks}`);
+});
+
 bot.onText(/\/setchannels/, (msg) => {
     userState[msg.chat.id] = { step: 'ch1' };
     bot.sendMessage(msg.chat.id, "📢 ১ম চ্যানেলের লিঙ্ক দিন (অথবা 'skip'):");
@@ -96,13 +117,15 @@ bot.onText(/\/post/, (msg) => {
     bot.sendMessage(msg.chat.id, "🎬 মুভির নাম (Title) লিখুন:");
 });
 
+// মেসেজ লিসেনার (স্টেপ বাই স্টেপ কাজ করার জন্য)
 bot.on('message', (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
-    if (!userState[chatId] || !text || text.startsWith('/')) return;
 
+    if (!userState[chatId] || !text || text.startsWith('/')) return;
     let state = userState[chatId];
 
+    // চ্যানেল সেটিংস
     if (state.step === 'ch1') {
         channels = []; if (text.toLowerCase() !== 'skip') channels.push(text);
         state.step = 'ch2'; bot.sendMessage(chatId, "📢 ২য় চ্যানেল (অথবা 'skip'):");
@@ -111,57 +134,55 @@ bot.on('message', (msg) => {
         state.step = 'ch3'; bot.sendMessage(chatId, "📢 ৩য় চ্যানেল (অথবা 'skip'):");
     } else if (state.step === 'ch3') {
         if (text.toLowerCase() !== 'skip') channels.push(text);
-        delete userState[chatId]; bot.sendMessage(chatId, "✅ চ্যানেল সেট হয়েছে।");
-    } else if (state.step === 1) {
-        state.title = text; state.step = 2; bot.sendMessage(chatId, "🖼 পোস্টার লিঙ্ক দিন:");
+        delete userState[chatId]; bot.sendMessage(chatId, `✅ ${channels.length}টি চ্যানেল সেভ হয়েছে।`);
+    } 
+    // পোস্ট মেকার
+    else if (state.step === 1) {
+        state.title = text; state.step = 2; bot.sendMessage(chatId, "🖼 পোস্টার ইমেজ লিঙ্ক (Direct URL) দিন:");
     } else if (state.step === 2) {
-        state.image = text; state.step = 3; bot.sendMessage(chatId, "📊 ১ম কোয়ালিটি অথবা 'skip':");
+        state.image = text; state.step = 3; bot.sendMessage(chatId, "📊 ১ম কোয়ালিটি (যেমন: 480p) অথবা 'skip':");
     } else if (state.step === 3) {
-        if (text.toLowerCase() !== 'skip') { state.tempQ = text; state.step = 4; bot.sendMessage(chatId, `🔗 ${text} লিঙ্ক:`); }
+        if (text.toLowerCase() !== 'skip') { state.tempQ = text; state.step = 4; bot.sendMessage(chatId, `🔗 ${text} ভিডিও লিঙ্ক দিন:`); }
         else { state.step = 5; bot.sendMessage(chatId, "📊 ২য় কোয়ালিটি অথবা 'skip':"); }
     } else if (state.step === 4) {
         state.links.push({ quality: state.tempQ, link: text }); state.step = 5; bot.sendMessage(chatId, "📊 ২য় কোয়ালিটি অথবা 'skip':");
     } else if (state.step === 5) {
-        if (text.toLowerCase() !== 'skip') { state.tempQ = text; state.step = 6; bot.sendMessage(chatId, `🔗 ${text} লিঙ্ক:`); }
+        if (text.toLowerCase() !== 'skip') { state.tempQ = text; state.step = 6; bot.sendMessage(chatId, `🔗 ${text} লিঙ্ক দিন:`); }
         else { state.step = 7; bot.sendMessage(chatId, "📊 ৩য় কোয়ালিটি অথবা 'skip':"); }
     } else if (state.step === 6) {
         state.links.push({ quality: state.tempQ, link: text }); state.step = 7; bot.sendMessage(chatId, "📊 ৩য় কোয়ালিটি অথবা 'skip':");
     } else if (state.step === 7) {
-        if (text.toLowerCase() !== 'skip') { state.tempQ = text; state.step = 8; bot.sendMessage(chatId, `🔗 ${text} লিঙ্ক:`); }
-        else { completePost(chatId); }
+        if (text.toLowerCase() !== 'skip') { state.tempQ = text; state.step = 8; bot.sendMessage(chatId, `🔗 ${text} লিঙ্ক দিন:`); }
+        else { finalize(chatId); }
     } else if (state.step === 8) {
-        state.links.push({ quality: state.tempQ, link: text }); completePost(chatId);
+        state.links.push({ quality: state.tempQ, link: text }); finalize(chatId);
     }
 });
 
-function completePost(chatId) {
-    const state = userState[chatId];
-    const opts = { reply_markup: { inline_keyboard: [[{ text: "✅ ফাইনাল করুন", callback_data: 'confirm_post' }]] } };
-    bot.sendMessage(chatId, `সব তথ্য ঠিক আছে?\n\nনাম: ${state.title}`, opts);
+function finalize(chatId) {
+    const opts = { reply_markup: { inline_keyboard: [[{ text: "✅ পোস্ট কনফার্ম করুন", callback_data: 'confirm' }]] } };
+    bot.sendMessage(chatId, `সব তথ্য কি ঠিক আছে?`, opts);
 }
 
 bot.on('callback_query', (query) => {
     const chatId = query.message.chat.id;
-    if (query.data === 'confirm_post' && userState[chatId]) {
+    if (query.data === 'confirm' && userState[chatId]) {
         const state = userState[chatId];
-        const postId = Date.now().toString().slice(-6);
-        posts[postId] = { title: state.title, image: state.image, links: state.links };
+        const id = Date.now().toString().slice(-6);
+        posts[id] = { title: state.title, image: state.image, links: state.links };
 
-        const finalUrl = `${myAppUrl}/post/${postId}`;
-        const rawHtml = generateHTML(state.title, state.image, state.quality, state.video, currentZoneId, requiredClicks, channels);
+        const url = `${myAppUrl}/post/${id}`;
+        const html = generateHTML(posts[id], currentZoneId, requiredClicks, channels);
 
-        // ১. লিঙ্ক পাঠানো
-        bot.sendMessage(chatId, `🎉 পোস্ট তৈরি হয়েছে।\n🔗 **লিঙ্ক:** ${finalUrl}`);
+        bot.sendMessage(chatId, `✅ পোস্ট সফল!\n🔗 লিঙ্ক: ${url}`);
+        bot.sendMessage(chatId, `📄 **HTML Code (Bloggers):**\n\n\`\`\`html\n${html}\n\`\`\``, { parse_mode: 'Markdown' });
         
-        // ২. HTML কোড পাঠানো (কপি করার জন্য)
-        bot.sendMessage(chatId, `📄 **ব্লগার/HTML কোড:**\n\n\`\`\`html\n${generateHTML(posts[postId], currentZoneId, requiredClicks, channels)}\n\`\`\``, { parse_mode: 'MarkdownV2' });
-
-        // ৩. প্রিভিউ বাটন
-        const previewOpts = { reply_markup: { inline_keyboard: [[{ text: "👁️ লাইভ প্রিভিউ দেখুন", url: finalUrl }]] } };
-        bot.sendMessage(chatId, "নিচের বাটনে ক্লিক করে প্রিভিউ দেখে নিন:", previewOpts);
+        bot.sendMessage(chatId, "নিচে ক্লিক করে প্রিভিউ দেখুন:", {
+            reply_markup: { inline_keyboard: [[{ text: "👁️ লাইভ প্রিভিউ", url: url }]] }
+        });
 
         delete userState[chatId];
     }
 });
 
-app.listen(process.env.PORT || 3000);
+app.listen(process.env.PORT || 3000, () => console.log("Server Started"));
