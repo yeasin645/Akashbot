@@ -8,7 +8,7 @@ app = Flask(__name__)
 
 # --- সিকিউরিটি কনফিগারেশন ---
 app.secret_key = os.environ.get("SECRET_KEY", "super_secret_dev_key_99")
-TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "c03534d021c33709b19e24021200155b") # ডিফল্ট কী (কাজ না করলে নিজেরটা দিবেন)
+TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "275aff9f1c570308fa10d14c6f49f998") # ডিফল্ট কী (কাজ না করলে নিজেরটা দিবেন)
 
 # ডাটাবেজ কানেকশন (রেন্ডার এনভায়রনমেন্ট থেকে নিবে)
 MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
