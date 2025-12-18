@@ -14,7 +14,7 @@ const config = {
     mongoUri: process.env.MONGODB_URI,
     adminId: parseInt(process.env.ADMIN_ID),
     appUrl: process.env.APP_URL, 
-    dbVersion: "13.0" 
+    dbVersion: "1.0" 
 };
 
 const bot = new TelegramBot(config.token, { polling: true });
