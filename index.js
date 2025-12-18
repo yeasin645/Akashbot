@@ -14,7 +14,7 @@ const config = {
     adminId: parseInt(process.env.ADMIN_ID), 
     appUrl: process.env.APP_URL, 
     adminUsername: process.env.ADMIN_USERNAME || "Admin",
-    dbVersion: process.env.DB_VERSION || "1.0" // ভার্সন চেঞ্জ করলে সব ডেটা ডিলিট হবে
+    dbVersion: process.env.DB_VERSION || "1.1" // ভার্সন চেঞ্জ করলে সব ডেটা ডিলিট হবে
 };
 
 const bot = new TelegramBot(config.token, { polling: true });
