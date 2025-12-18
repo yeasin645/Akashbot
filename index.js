@@ -7,7 +7,7 @@ const axios = require('axios');
 const app = express();
 app.use(express.json());
 
-// --- ১. কনফিগারেশন (আপনার তথ্য দিয়ে দিন) ---
+// --- ১. কনফিগারেশন (Environment Variables) ---
 const config = {
     token: process.env.BOT_TOKEN,
     mongoUri: process.env.MONGODB_URI,
@@ -37,7 +37,7 @@ const Post = mongoose.model('Post', new mongoose.Schema({
 
 let userState = {};
 
-// প্রিমিয়াম চেক
+// প্রিমিয়াম মেম্বারশিপ চেক
 async function isPremium(id) {
     if (id === config.adminId) return true;
     const p = await Premium.findOne({ userId: id });
@@ -70,7 +70,7 @@ bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
     await User.findOneAndUpdate({ userId: chatId }, { userId: chatId, name: msg.from.first_name }, { upsert: true });
     await Profile.findOneAndUpdate({ userId: chatId }, { userId: chatId }, { upsert: true });
-    bot.sendMessage(chatId, "👋 **Movie Bot Master** এ স্বাগতম!", { reply_markup: await getMenu(chatId) });
+    bot.sendMessage(chatId, "👋 **Movie Pro Panel** এ স্বাগতম!", { reply_markup: await getMenu(chatId) });
 });
 
 bot.on('callback_query', async (q) => {
@@ -78,9 +78,8 @@ bot.on('callback_query', async (q) => {
     const isAdmin = (chatId === config.adminId);
     const isP = await isPremium(chatId);
 
-    // সিকিউরিটি চেক
     if (["start_post", "setup_ch", "set_zone", "set_ad_limit"].includes(q.data) && !isP) {
-        return bot.answerCallbackQuery(q.id, { text: "🛑 আপনার প্রিমিয়াম নেই!", show_alert: true });
+        return bot.answerCallbackQuery(q.id, { text: "🛑 প্রিমিয়াম সাবস্ক্রিপশন প্রয়োজন!", show_alert: true });
     }
 
     switch (q.data) {
@@ -103,25 +102,25 @@ bot.on('callback_query', async (q) => {
 
         case "add_ch": userState[chatId] = { step: 'ch_name' }; bot.sendMessage(chatId, "চ্যানেলের নাম:"); break;
         case "clear_ch": await Profile.findOneAndUpdate({ userId: chatId }, { channels: [] }); bot.sendMessage(chatId, "✅ সব চ্যানেল মোছা হয়েছে।"); break;
-        case "set_zone": userState[chatId] = { step: 'zone' }; bot.sendMessage(chatId, "নতুন Zone ID দিন:"); break;
-        case "set_ad_limit": userState[chatId] = { step: 'ad_limit' }; bot.sendMessage(chatId, "অ্যাড সংখ্যা দিন:"); break;
+        case "set_zone": userState[chatId] = { step: 'zone' }; bot.sendMessage(chatId, "নতুন Monetag/Adsterra Zone ID দিন:"); break;
+        case "set_ad_limit": userState[chatId] = { step: 'ad_limit' }; bot.sendMessage(chatId, "অ্যাড লিমিট সংখ্যা দিন:"); break;
         case "add_plan": userState[chatId] = { step: 'plan_name' }; bot.sendMessage(chatId, "প্ল্যানের নাম:"); break;
-        case "add_p": userState[chatId] = { step: 'add_p_id' }; bot.sendMessage(chatId, "ইউজার আইডি:"); break;
-        case "del_p": userState[chatId] = { step: 'del_p_id' }; bot.sendMessage(chatId, "যাকে বাদ দিবেন তার আইডি:"); break;
+        case "add_p": userState[chatId] = { step: 'add_p_id' }; bot.sendMessage(chatId, "যাকে প্রিমিয়াম দিবেন তার Telegram ID:"); break;
+        case "del_p": userState[chatId] = { step: 'del_p_id' }; bot.sendMessage(chatId, "যার প্রিমিয়াম বাতিল করবেন তার ID:"); break;
         case "view_stats":
             const tu = await User.countDocuments();
             const tp = await Premium.countDocuments();
-            bot.sendMessage(chatId, `📊 মোট ইউজার: ${tu}\n💎 প্রিমিয়াম: ${tp}`);
+            bot.sendMessage(chatId, `📊 মোট ইউজার: ${tu}\n💎 প্রিমিয়াম মেম্বার: ${tp}`);
             break;
         case "view_premium":
             const plans = await Plan.find();
-            let pTxt = "💎 **প্যাকেজসমূহ:**\n\n";
-            plans.length ? plans.forEach(p => pTxt += `✅ ${p.name} - ${p.price}\n`) : pTxt += "নেই।";
-            bot.sendMessage(chatId, pTxt, { reply_markup: { inline_keyboard: [[{ text: "💬 যোগাযোগ", url: `https://t.me/${config.adminUser}` }]] } });
+            let pTxt = "💎 **আমাদের প্রিমিয়াম প্যাকেজসমূহ:**\n\n";
+            plans.length ? plans.forEach(p => pTxt += `✅ ${p.name} - ${p.price} (${p.days} দিন)\n`) : pTxt += "কোনো প্ল্যান নেই।";
+            bot.sendMessage(chatId, pTxt, { reply_markup: { inline_keyboard: [[{ text: "💬 কিনুন (Admin)", url: `https://t.me/${config.adminUser}` }]] } });
             break;
         case "start_post":
             userState[chatId] = { step: 'title', links: [] };
-            bot.sendMessage(chatId, "মুভির নাম লিখুন:");
+            bot.sendMessage(chatId, "🎬 মুভির নাম লিখুন:");
             break;
         case "confirm":
             const s = userState[chatId];
@@ -129,14 +128,14 @@ bot.on('callback_query', async (q) => {
             const pid = Math.random().toString(36).substring(7);
             await new Post({ id: pid, creatorId: chatId, title: s.title, image: s.image, links: s.links, zoneId: profile.zoneId, adLimit: profile.adCount, channels: profile.channels }).save();
             const url = `${config.appUrl}/post/${pid}`;
-            bot.sendMessage(chatId, `✅ সফল!\n🔗 লিঙ্ক: ${url}\n📝 কোড: <code>&lt;a href="${url}"&gt;🎬 Watch ${s.title}&lt;/a&gt;</code>`, { parse_mode: 'HTML' });
+            bot.sendMessage(chatId, `✅ সফল!\n🔗 লিঙ্ক: ${url}\n\n📝 **চ্যানেল কোড (ট্যাপ করলে কপি হবে):**\n<code>&lt;a href="${url}"&gt;🎬 Watch ${s.title}&lt;/a&gt;</code>`, { parse_mode: 'HTML' });
             delete userState[chatId];
             break;
     }
     bot.answerCallbackQuery(q.id);
 });
 
-// --- ৪. ইনপুট হ্যান্ডলিং ---
+// --- ৪. মেসেজ ইনপুট লজিক ---
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
@@ -149,31 +148,31 @@ bot.on('message', async (msg) => {
         bot.sendMessage(chatId, "✅ জোন আইডি আপডেট হয়েছে।"); delete userState[chatId];
     } else if (s.step === 'ad_limit') {
         await Profile.findOneAndUpdate({ userId: chatId }, { adCount: parseInt(text) || 3 }, { upsert: true });
-        bot.sendMessage(chatId, "✅ লিমিট আপডেট হয়েছে।"); delete userState[chatId];
+        bot.sendMessage(chatId, "✅ অ্যাড লিমিট আপডেট হয়েছে।"); delete userState[chatId];
     } else if (s.step === 'ch_name') {
-        s.cN = text; s.step = 'ch_link'; bot.sendMessage(chatId, "চ্যানেল লিঙ্ক:");
+        s.cN = text; s.step = 'ch_link'; bot.sendMessage(chatId, "চ্যানেল লিঙ্ক (https://t.me/...):");
     } else if (s.step === 'ch_link') {
         await Profile.findOneAndUpdate({ userId: chatId }, { $push: { channels: { name: s.cN, link: text } } }, { upsert: true });
         bot.sendMessage(chatId, "✅ চ্যানেল যুক্ত হয়েছে।"); delete userState[chatId];
     } else if (s.step === 'plan_name') {
-        s.pN = text; s.step = 'plan_price'; bot.sendMessage(chatId, "দাম:");
+        s.pN = text; s.step = 'plan_price'; bot.sendMessage(chatId, "দাম (যেমন: ১০০ টাকা):");
     } else if (s.step === 'plan_price') {
-        s.pP = text; s.step = 'plan_days'; bot.sendMessage(chatId, "দিন (সংখ্যা):");
+        s.pP = text; s.step = 'plan_days'; bot.sendMessage(chatId, "মেয়াদ (সংখ্যায় দিন):");
     } else if (s.step === 'plan_days') {
         await new Plan({ name: s.pN, price: s.pP, days: parseInt(text) }).save();
         bot.sendMessage(chatId, "✅ প্ল্যান সেভ হয়েছে।"); delete userState[chatId];
     } else if (s.step === 'add_p_id') {
-        s.targetId = text; s.step = 'add_p_days'; bot.sendMessage(chatId, "কত দিন?");
+        s.tId = text; s.step = 'add_p_days'; bot.sendMessage(chatId, "কত দিনের জন্য?");
     } else if (s.step === 'add_p_days') {
         const exp = moment().add(parseInt(text), 'days').toDate();
-        await Premium.findOneAndUpdate({ userId: parseInt(s.targetId) }, { expiry: exp }, { upsert: true });
-        bot.sendMessage(chatId, "✅ মেম্বার যুক্ত!"); delete userState[chatId];
+        await Premium.findOneAndUpdate({ userId: parseInt(s.tId) }, { expiry: exp }, { upsert: true });
+        bot.sendMessage(chatId, "✅ মেম্বার যুক্ত হয়েছে।"); delete userState[chatId];
     } else if (s.step === 'del_p_id') {
         await Premium.deleteOne({ userId: parseInt(text) });
-        bot.sendMessage(chatId, "❌ বাতিল করা হয়েছে।"); delete userState[chatId];
-    } else if (s.step === 'title') { s.title = text; s.step = 'img'; bot.sendMessage(chatId, "ইমেজ লিঙ্ক:"); }
-    else if (s.step === 'img') { s.image = text; s.step = 'q_name'; bot.sendMessage(chatId, "কোয়ালিটি:"); }
-    else if (s.step === 'q_name') { s.tempQ = text; s.step = 'q_link'; bot.sendMessage(chatId, "ডাউনলোড লিঙ্ক:"); }
+        bot.sendMessage(chatId, "❌ প্রিমিয়াম বাতিল করা হয়েছে।"); delete userState[chatId];
+    } else if (s.step === 'title') { s.title = text; s.step = 'img'; bot.sendMessage(chatId, "ইমেজ লিঙ্ক দিন:"); }
+    else if (s.step === 'img') { s.image = text; s.step = 'q_name'; bot.sendMessage(chatId, "কোয়ালিটি (উদা: 720p):"); }
+    else if (s.step === 'q_name') { s.tempQ = text; s.step = 'q_link'; bot.sendMessage(chatId, "ডাউনলোড লিঙ্ক দিন:"); }
     else if (s.step === 'q_link') {
         s.links.push({ q: s.tempQ, link: text });
         bot.sendMessage(chatId, "আরও লিঙ্ক? না হলে Confirm চাপুন।", { reply_markup: { inline_keyboard: [[{ text: "🚀 Confirm", callback_data: "confirm" }]] } });
@@ -181,32 +180,59 @@ bot.on('message', async (msg) => {
     }
 });
 
-// --- ৫. ল্যান্ডিং পেজ ও অ্যাড লজিক ---
+// --- ৫. ল্যান্ডিং পেজ (অ্যাড ফিক্সড ভার্সন) ---
 app.get('/post/:id', async (req, res) => {
     const p = await Post.findOne({ id: req.params.id });
-    if (!p) return res.send("Not Found");
+    if (!p) return res.send("Invalid Request!");
 
-    let ads = "";
+    // মনিটেগ অ্যাড জেনারেটর লুপ
+    let adsHtml = "";
     for (let i = 0; i < p.adLimit; i++) {
-        ads += `<div style="margin:10px 0;"><script src='//libtl.com/sdk.js' data-zone='${p.zoneId}' data-sdk='show_${p.zoneId}'></script></div>`;
+        adsHtml += `
+        <div class="ad-box">
+            <script src='//libtl.com/sdk.js' data-zone='${p.zoneId}' data-sdk='show_${p.zoneId}'></script>
+        </div>`;
     }
 
     res.send(`
+    <!DOCTYPE html>
     <html>
-    <head><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${p.title}</title>
-    <style>body{background:#000;color:#fff;text-align:center;font-family:sans-serif;padding:20px;} img{max-width:100%;border-radius:10px;} .btn{display:block;background:#e50914;color:#fff;padding:15px;margin:10px;text-decoration:none;border-radius:5px;font-weight:bold;}</style>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Download ${p.title}</title>
+        <style>
+            body { background: #0b0b0b; color: #fff; text-align: center; font-family: sans-serif; padding: 20px; }
+            .container { max-width: 500px; margin: auto; background: #1a1a1a; padding: 20px; border-radius: 15px; }
+            img { width: 100%; border-radius: 10px; margin: 15px 0; border: 1px solid #333; }
+            .btn { display: block; background: #e50914; color: #fff; padding: 15px; margin: 10px 0; text-decoration: none; border-radius: 8px; font-weight: bold; }
+            .badge { background: #ff9800; color: #000; padding: 5px 12px; border-radius: 20px; font-size: 13px; font-weight: bold; }
+            .ad-box { margin: 15px 0; min-height: 80px; background: rgba(255,255,255,0.03); border-radius: 5px; }
+            .ch-btn { display: inline-block; background: #0088cc; color: #fff; padding: 10px; margin: 5px; text-decoration: none; border-radius: 5px; font-size: 13px; }
+        </style>
     </head>
     <body>
-        <h2>${p.title}</h2><img src="${p.image}">
-        <div id="ads">${ads}</div>
-        ${p.links.map(l => `<a href="${l.link}" class="btn">Download ${l.q}</a>`).join('')}
-        <div style="margin-top:20px;">${p.channels.map(c => `<a href="${c.link}" style="color:#0088cc;margin:5px;">Join ${c.name}</a>`).join('')}</div>
-        <div id="ads-footer">${ads}</div>
+        <div class="container">
+            <h2>${p.title}</h2>
+            <img src="${p.image}">
+            <div class="badge">🎯 অ্যাড লিমিট: ${p.adLimit} টি</div>
+            
+            <div id="top-ads">${adsHtml}</div>
+
+            <h3>ডাউনলোড লিঙ্ক:</h3>
+            ${p.links.map(l => `<a href="${l.link}" class="btn">Download ${l.q}</a>`).join('')}
+
+            <div style="margin:20px 0;">
+                <p style="color:#888;">Join Our Channels:</p>
+                ${p.channels.map(c => `<a href="${c.link}" class="ch-btn">${c.name}</a>`).join('')}
+            </div>
+
+            <div id="footer-ads">${adsHtml}</div>
+        </div>
     </body>
     </html>`);
 });
 
-app.get('/', (req, res) => res.send("Active"));
+app.get('/', (req, res) => res.send("Bot is Active! 🚀"));
 app.listen(process.env.PORT || 3000, () => {
     setInterval(() => { if(config.appUrl) axios.get(config.appUrl).catch(()=>{}); }, 5 * 60 * 1000);
 });
