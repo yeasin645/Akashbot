@@ -1,141 +1,87 @@
 const express = require('express');
 const TelegramBot = require('node-telegram-bot-api');
 const mongoose = require('mongoose');
-const moment = require('moment-timezone');
 const axios = require('axios');
 
 const app = express();
 app.use(express.json());
 
-// --- ১. কনফিগারেশন (Environment Variables) ---
+// --- ১. কনফিগারেশন ---
 const config = {
     token: process.env.BOT_TOKEN,
     mongoUri: process.env.MONGODB_URI,
     adminId: parseInt(process.env.ADMIN_ID),
-    adminUser: process.env.ADMIN_USERNAME || "YourUsername", 
+    adminUser: process.env.ADMIN_USERNAME || "AdminUsername",
     appUrl: process.env.APP_URL 
 };
 
 const bot = new TelegramBot(config.token, { polling: true });
 
-// --- ২. ডাটাবেস মডেলসমূহ ---
-mongoose.connect(config.mongoUri).then(() => console.log("✅ DB Connected")).catch(e => console.log(e));
+// --- ২. ডাটাবেস মডেল ---
+mongoose.connect(config.mongoUri).then(() => console.log("✅ DB Connected"));
 
-const User = mongoose.model('User', new mongoose.Schema({ userId: Number, name: String }));
-const Premium = mongoose.model('Premium', new mongoose.Schema({ userId: Number, expiry: Date }));
-const Plan = mongoose.model('Plan', new mongoose.Schema({ name: String, price: String, days: Number }));
 const Profile = mongoose.model('Profile', new mongoose.Schema({ 
     userId: { type: Number, unique: true }, 
-    zoneId: { type: String, default: '10341337' }, 
-    adCount: { type: Number, default: 3 }, 
-    channels: { type: Array, default: [] } 
+    zoneId: { type: String, default: '10341337' }, // ডিফল্ট জোন আইডি
+    adCount: { type: Number, default: 3 },
+    channels: { type: Array, default: [] }
 }));
+
 const Post = mongoose.model('Post', new mongoose.Schema({ 
-    id: String, creatorId: Number, title: String, image: String, links: Array, 
+    id: String, title: String, image: String, links: Array, 
     zoneId: String, adLimit: Number, channels: Array 
 }));
 
 let userState = {};
 
-// প্রিমিয়াম মেম্বারশিপ চেক
-async function isPremium(id) {
-    if (id === config.adminId) return true;
-    const p = await Premium.findOne({ userId: id });
-    if (!p) return false;
-    if (new Date() > p.expiry) { await Premium.deleteOne({ userId: id }); return false; }
-    return true;
-}
-
-// বাটন মেনু জেনারেটর
-async function getMenu(chatId) {
-    const isP = await isPremium(chatId);
-    const isAdmin = (chatId === config.adminId);
-    let btns = [];
-
-    if (isP || isAdmin) {
-        btns.push([{ text: "🎬 মুভি পোস্ট তৈরি", callback_data: "start_post" }]);
-        btns.push([{ text: "📢 চ্যানেল সেটিংস", callback_data: "setup_ch" }, { text: "🆔 জোন আইডি", callback_data: "set_zone" }]);
-        btns.push([{ text: "🔢 অ্যাড লিমিট", callback_data: "set_ad_limit" }, { text: "💎 প্ল্যান তালিকা", callback_data: "view_premium" }]);
-    } else {
-        btns.push([{ text: "🎬 মুভি পোস্ট তৈরি 🔒", callback_data: "start_post" }]);
-        btns.push([{ text: "💎 প্রিমিয়াম প্ল্যান দেখুন", callback_data: "view_premium" }]);
-    }
-    if (isAdmin) btns.push([{ text: "🛠 অ্যাডমিন প্যানেল", callback_data: "admin_panel" }]);
-    btns.push([{ text: "💬 ওনার কন্টাক্ট", url: `https://t.me/${config.adminUser}` }]);
-    return { inline_keyboard: btns };
-}
-
-// --- ৩. কমান্ড ও কলব্যাক হ্যান্ডলিং ---
+// --- ৩. বোট লজিক ও বাটন হ্যান্ডলিং ---
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
-    await User.findOneAndUpdate({ userId: chatId }, { userId: chatId, name: msg.from.first_name }, { upsert: true });
     await Profile.findOneAndUpdate({ userId: chatId }, { userId: chatId }, { upsert: true });
-    bot.sendMessage(chatId, "👋 **Movie Pro Panel** এ স্বাগতম!", { reply_markup: await getMenu(chatId) });
+    
+    bot.sendMessage(chatId, "🎬 **Movie Bot Control Panel**\nআপনার সেটিংস কনফিগার করুন এবং মুভি পোস্ট তৈরি করুন।", {
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: "🎬 মুভি পোস্ট তৈরি", callback_data: "start_post" }],
+                [{ text: "🆔 জোন আইডি পরিবর্তন", callback_data: "set_zone" }, { text: "🔢 অ্যাড লিমিট", callback_data: "set_limit" }],
+                [{ text: "📢 চ্যানেল যোগ করুন", callback_data: "add_ch" }, { text: "🗑 চ্যানেল ক্লিয়ার", callback_data: "clear_ch" }]
+            ]
+        }
+    });
 });
 
 bot.on('callback_query', async (q) => {
     const chatId = q.message.chat.id;
-    const isAdmin = (chatId === config.adminId);
-    const isP = await isPremium(chatId);
+    
+    if (q.data === "set_zone") {
+        userState[chatId] = { step: 'zone' };
+        bot.sendMessage(chatId, "আপনার নতুন **Monetag Zone ID** দিন (উদা: 10341337):");
+    } else if (q.data === "set_limit") {
+        userState[chatId] = { step: 'limit' };
+        bot.sendMessage(chatId, "মুভি ডাউনলোডের আগে কয়টি অ্যাড ক্লিক করতে হবে? (সংখ্যা দিন):");
+    } else if (q.data === "start_post") {
+        userState[chatId] = { step: 'title', links: [] };
+        bot.sendMessage(chatId, "🎬 মুভির নাম লিখুন:");
+    } else if (q.data === "clear_ch") {
+        await Profile.findOneAndUpdate({ userId: chatId }, { channels: [] });
+        bot.sendMessage(chatId, "✅ সব চ্যানেল ডিলিট করা হয়েছে।");
+    } else if (q.data === "confirm_post") {
+        const s = userState[chatId];
+        const pf = await Profile.findOne({ userId: chatId });
+        const pid = Math.random().toString(36).substring(7);
+        
+        await new Post({ 
+            id: pid, title: s.title, image: s.image, links: s.links, 
+            zoneId: pf.zoneId, adLimit: pf.adCount, channels: pf.channels 
+        }).save();
 
-    if (["start_post", "setup_ch", "set_zone", "set_ad_limit"].includes(q.data) && !isP) {
-        return bot.answerCallbackQuery(q.id, { text: "🛑 প্রিমিয়াম সাবস্ক্রিপশন প্রয়োজন!", show_alert: true });
-    }
-
-    switch (q.data) {
-        case "admin_panel":
-            if (!isAdmin) return;
-            bot.sendMessage(chatId, "📊 **অ্যাডমিন ড্যাশবোর্ড:**", {
-                reply_markup: { inline_keyboard: [
-                    [{ text: "➕ মেম্বার অ্যাড", callback_data: "add_p" }, { text: "🗑 মেম্বার ডিলিট", callback_data: "del_p" }],
-                    [{ text: "📝 প্ল্যান অ্যাড", callback_data: "add_plan" }, { text: "📈 লাইভ স্ট্যাটাস", callback_data: "view_stats" }]
-                ]}
-            });
-            break;
-
-        case "setup_ch":
-            const pf = await Profile.findOne({ userId: chatId });
-            let chMsg = "📢 **আপনার চ্যানেলসমূহ:**\n";
-            pf.channels.length ? pf.channels.forEach((c, i) => chMsg += `${i+1}. ${c.name}\n`) : chMsg += "কিছুই নেই।";
-            bot.sendMessage(chatId, chMsg, { reply_markup: { inline_keyboard: [[{ text: "➕ চ্যানেল অ্যাড", callback_data: "add_ch" }], [{ text: "🗑 ক্লিয়ার অল", callback_data: "clear_ch" }]] } });
-            break;
-
-        case "add_ch": userState[chatId] = { step: 'ch_name' }; bot.sendMessage(chatId, "চ্যানেলের নাম:"); break;
-        case "clear_ch": await Profile.findOneAndUpdate({ userId: chatId }, { channels: [] }); bot.sendMessage(chatId, "✅ সব চ্যানেল মোছা হয়েছে।"); break;
-        case "set_zone": userState[chatId] = { step: 'zone' }; bot.sendMessage(chatId, "নতুন Monetag/Adsterra Zone ID দিন:"); break;
-        case "set_ad_limit": userState[chatId] = { step: 'ad_limit' }; bot.sendMessage(chatId, "অ্যাড লিমিট সংখ্যা দিন:"); break;
-        case "add_plan": userState[chatId] = { step: 'plan_name' }; bot.sendMessage(chatId, "প্ল্যানের নাম:"); break;
-        case "add_p": userState[chatId] = { step: 'add_p_id' }; bot.sendMessage(chatId, "যাকে প্রিমিয়াম দিবেন তার Telegram ID:"); break;
-        case "del_p": userState[chatId] = { step: 'del_p_id' }; bot.sendMessage(chatId, "যার প্রিমিয়াম বাতিল করবেন তার ID:"); break;
-        case "view_stats":
-            const tu = await User.countDocuments();
-            const tp = await Premium.countDocuments();
-            bot.sendMessage(chatId, `📊 মোট ইউজার: ${tu}\n💎 প্রিমিয়াম মেম্বার: ${tp}`);
-            break;
-        case "view_premium":
-            const plans = await Plan.find();
-            let pTxt = "💎 **আমাদের প্রিমিয়াম প্যাকেজসমূহ:**\n\n";
-            plans.length ? plans.forEach(p => pTxt += `✅ ${p.name} - ${p.price} (${p.days} দিন)\n`) : pTxt += "কোনো প্ল্যান নেই।";
-            bot.sendMessage(chatId, pTxt, { reply_markup: { inline_keyboard: [[{ text: "💬 কিনুন (Admin)", url: `https://t.me/${config.adminUser}` }]] } });
-            break;
-        case "start_post":
-            userState[chatId] = { step: 'title', links: [] };
-            bot.sendMessage(chatId, "🎬 মুভির নাম লিখুন:");
-            break;
-        case "confirm":
-            const s = userState[chatId];
-            const profile = await Profile.findOne({ userId: chatId });
-            const pid = Math.random().toString(36).substring(7);
-            await new Post({ id: pid, creatorId: chatId, title: s.title, image: s.image, links: s.links, zoneId: profile.zoneId, adLimit: profile.adCount, channels: profile.channels }).save();
-            const url = `${config.appUrl}/post/${pid}`;
-            bot.sendMessage(chatId, `✅ সফল!\n🔗 লিঙ্ক: ${url}\n\n📝 **চ্যানেল কোড (ট্যাপ করলে কপি হবে):**\n<code>&lt;a href="${url}"&gt;🎬 Watch ${s.title}&lt;/a&gt;</code>`, { parse_mode: 'HTML' });
-            delete userState[chatId];
-            break;
+        const postUrl = `${config.appUrl}/post/${pid}`;
+        bot.sendMessage(chatId, `✅ সফলভাবে পোস্ট তৈরি হয়েছে!\n🔗 লিঙ্ক: ${postUrl}\n\n📝 **চ্যানেল কোড:**\n<code>&lt;a href="${postUrl}"&gt;🎬 Watch ${s.title}&lt;/a&gt;</code>`, { parse_mode: 'HTML' });
+        delete userState[chatId];
     }
     bot.answerCallbackQuery(q.id);
 });
 
-// --- ৪. মেসেজ ইনপুট লজিক ---
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
@@ -144,95 +90,101 @@ bot.on('message', async (msg) => {
     if (!s) return;
 
     if (s.step === 'zone') {
-        await Profile.findOneAndUpdate({ userId: chatId }, { zoneId: text.trim() }, { upsert: true });
-        bot.sendMessage(chatId, "✅ জোন আইডি আপডেট হয়েছে।"); delete userState[chatId];
-    } else if (s.step === 'ad_limit') {
-        await Profile.findOneAndUpdate({ userId: chatId }, { adCount: parseInt(text) || 3 }, { upsert: true });
+        await Profile.findOneAndUpdate({ userId: chatId }, { zoneId: text.trim() });
+        bot.sendMessage(chatId, `✅ জোন আইডি **${text}** সেট করা হয়েছে। এখন থেকে আপনার সব পোস্টে এই আইডি এবং Show আইডি কাজ করবে।`); 
+        delete userState[chatId];
+    } else if (s.step === 'limit') {
+        await Profile.findOneAndUpdate({ userId: chatId }, { adCount: parseInt(text) || 3 });
         bot.sendMessage(chatId, "✅ অ্যাড লিমিট আপডেট হয়েছে।"); delete userState[chatId];
-    } else if (s.step === 'ch_name') {
-        s.cN = text; s.step = 'ch_link'; bot.sendMessage(chatId, "চ্যানেল লিঙ্ক (https://t.me/...):");
-    } else if (s.step === 'ch_link') {
-        await Profile.findOneAndUpdate({ userId: chatId }, { $push: { channels: { name: s.cN, link: text } } }, { upsert: true });
-        bot.sendMessage(chatId, "✅ চ্যানেল যুক্ত হয়েছে।"); delete userState[chatId];
-    } else if (s.step === 'plan_name') {
-        s.pN = text; s.step = 'plan_price'; bot.sendMessage(chatId, "দাম (যেমন: ১০০ টাকা):");
-    } else if (s.step === 'plan_price') {
-        s.pP = text; s.step = 'plan_days'; bot.sendMessage(chatId, "মেয়াদ (সংখ্যায় দিন):");
-    } else if (s.step === 'plan_days') {
-        await new Plan({ name: s.pN, price: s.pP, days: parseInt(text) }).save();
-        bot.sendMessage(chatId, "✅ প্ল্যান সেভ হয়েছে।"); delete userState[chatId];
-    } else if (s.step === 'add_p_id') {
-        s.tId = text; s.step = 'add_p_days'; bot.sendMessage(chatId, "কত দিনের জন্য?");
-    } else if (s.step === 'add_p_days') {
-        const exp = moment().add(parseInt(text), 'days').toDate();
-        await Premium.findOneAndUpdate({ userId: parseInt(s.tId) }, { expiry: exp }, { upsert: true });
-        bot.sendMessage(chatId, "✅ মেম্বার যুক্ত হয়েছে।"); delete userState[chatId];
-    } else if (s.step === 'del_p_id') {
-        await Premium.deleteOne({ userId: parseInt(text) });
-        bot.sendMessage(chatId, "❌ প্রিমিয়াম বাতিল করা হয়েছে।"); delete userState[chatId];
     } else if (s.step === 'title') { s.title = text; s.step = 'img'; bot.sendMessage(chatId, "ইমেজ লিঙ্ক দিন:"); }
-    else if (s.step === 'img') { s.image = text; s.step = 'q_name'; bot.sendMessage(chatId, "কোয়ালিটি (উদা: 720p):"); }
-    else if (s.step === 'q_name') { s.tempQ = text; s.step = 'q_link'; bot.sendMessage(chatId, "ডাউনলোড লিঙ্ক দিন:"); }
-    else if (s.step === 'q_link') {
-        s.links.push({ q: s.tempQ, link: text });
-        bot.sendMessage(chatId, "আরও লিঙ্ক? না হলে Confirm চাপুন।", { reply_markup: { inline_keyboard: [[{ text: "🚀 Confirm", callback_data: "confirm" }]] } });
-        s.step = 'q_name';
+    else if (s.step === 'img') { s.image = text; s.step = 'q'; bot.sendMessage(chatId, "কোয়ালিটি (720p/1080p):"); }
+    else if (s.step === 'q') { s.tmpQ = text; s.step = 'link'; bot.sendMessage(chatId, "ডাউনলোড লিঙ্ক দিন:"); }
+    else if (s.step === 'link') {
+        s.links.push({ q: s.tmpQ, link: text });
+        bot.sendMessage(chatId, "আরও লিঙ্ক যোগ করবেন? না হলে Confirm চাপুন।", { 
+            reply_markup: { inline_keyboard: [[{ text: "🚀 Confirm & Save", callback_data: "confirm_post" }]] } 
+        });
+        s.step = 'q';
     }
 });
 
-// --- ৫. ল্যান্ডিং পেজ (অ্যাড ফিক্সড ভার্সন) ---
+// --- ৪. ল্যান্ডিং পেজ (অ্যাড ট্র্যাকিং ও ডাইনামিক SDK) ---
 app.get('/post/:id', async (req, res) => {
     const p = await Post.findOne({ id: req.params.id });
-    if (!p) return res.send("Invalid Request!");
-
-    // মনিটেগ অ্যাড জেনারেটর লুপ
-    let adsHtml = "";
-    for (let i = 0; i < p.adLimit; i++) {
-        adsHtml += `
-        <div class="ad-box">
-            <script src='//libtl.com/sdk.js' data-zone='${p.zoneId}' data-sdk='show_${p.zoneId}'></script>
-        </div>`;
-    }
+    if (!p) return res.send("Link Expired or Not Found!");
 
     res.send(`
     <!DOCTYPE html>
-    <html>
+    <html lang="en">
     <head>
+        <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Download ${p.title}</title>
+        
+        <script src='//libtl.com/sdk.js' data-zone='${p.zoneId}' data-sdk='show_${p.zoneId}'></script>
+        
         <style>
-            body { background: #0b0b0b; color: #fff; text-align: center; font-family: sans-serif; padding: 20px; }
-            .container { max-width: 500px; margin: auto; background: #1a1a1a; padding: 20px; border-radius: 15px; }
-            img { width: 100%; border-radius: 10px; margin: 15px 0; border: 1px solid #333; }
-            .btn { display: block; background: #e50914; color: #fff; padding: 15px; margin: 10px 0; text-decoration: none; border-radius: 8px; font-weight: bold; }
-            .badge { background: #ff9800; color: #000; padding: 5px 12px; border-radius: 20px; font-size: 13px; font-weight: bold; }
-            .ad-box { margin: 15px 0; min-height: 80px; background: rgba(255,255,255,0.03); border-radius: 5px; }
-            .ch-btn { display: inline-block; background: #0088cc; color: #fff; padding: 10px; margin: 5px; text-decoration: none; border-radius: 5px; font-size: 13px; }
+            body { background:#0a0a0a; color:#fff; font-family: sans-serif; text-align:center; padding:15px; }
+            .card { background:#161616; padding:20px; border-radius:15px; border:1px solid #333; max-width:500px; margin:auto; }
+            img { width:100%; border-radius:10px; margin:15px 0; }
+            .btn { display:block; background:#e50914; color:#fff; padding:15px; margin:10px 0; text-decoration:none; border-radius:8px; font-weight:bold; cursor:pointer; font-size:18px; border:none; width:100%; }
+            .info { background:#222; padding:10px; border-radius:30px; margin-bottom:15px; color:#ff9800; font-weight:bold; }
+            .hidden { display:none; }
         </style>
     </head>
     <body>
-        <div class="container">
+        <div class="card">
             <h2>${p.title}</h2>
             <img src="${p.image}">
-            <div class="badge">🎯 অ্যাড লিমিট: ${p.adLimit} টি</div>
             
-            <div id="top-ads">${adsHtml}</div>
-
-            <h3>ডাউনলোড লিঙ্ক:</h3>
-            ${p.links.map(l => `<a href="${l.link}" class="btn">Download ${l.q}</a>`).join('')}
-
-            <div style="margin:20px 0;">
-                <p style="color:#888;">Join Our Channels:</p>
-                ${p.channels.map(c => `<a href="${c.link}" class="ch-btn">${c.name}</a>`).join('')}
+            <div class="info">
+                Ads Status: <span id="count">0</span> / ${p.adLimit}
             </div>
 
-            <div id="footer-ads">${adsHtml}</div>
+            <p id="msg">নিচের বাটনে ক্লিক করে অ্যাড লোড করুন।</p>
+
+            <div id="action-area">
+                ${p.links.map((l, i) => `
+                    <button class="btn unlock-btn" onclick="showAd('${l.link}', ${i})">🔓 Unlock ${l.q}</button>
+                    <a href="${l.link}" class="btn hidden dl-link" id="dl-${i}">📥 Download ${l.q}</a>
+                `).join('')}
+            </div>
+
+            <div style="margin-top:20px;">
+                ${p.channels.map(c => `<a href="${c.link}" style="color:#0088cc; display:block; margin:5px;">Join: ${c.name}</a>`).join('')}
+            </div>
         </div>
+
+        <script>
+            let clicks = 0;
+            const target = ${p.adLimit};
+
+            function showAd(url, idx) {
+                // মনিটেগ শো আইডি ট্রিগার
+                if (typeof show_${p.zoneId} === 'function') {
+                    show_${p.zoneId}();
+                }
+
+                clicks++;
+                document.getElementById('count').innerText = clicks;
+
+                if (clicks >= target) {
+                    document.getElementById('msg').innerText = "✅ লিঙ্ক আনলক হয়েছে!";
+                    document.getElementById('msg').style.color = "#4caf50";
+                    
+                    // আনলক বাটন হাইড এবং ডাউনলোড লিঙ্ক শো
+                    document.querySelectorAll('.unlock-btn').forEach(b => b.classList.add('hidden'));
+                    document.querySelectorAll('.dl-link').forEach(l => l.classList.remove('hidden'));
+                } else {
+                    alert("বিজ্ঞাপন লোড হয়েছে। আরও " + (target - clicks) + " বার ক্লিক করুন।");
+                }
+            }
+        </script>
     </body>
-    </html>`);
+    </html>
+    `);
 });
 
-app.get('/', (req, res) => res.send("Bot is Active! 🚀"));
 app.listen(process.env.PORT || 3000, () => {
     setInterval(() => { if(config.appUrl) axios.get(config.appUrl).catch(()=>{}); }, 5 * 60 * 1000);
 });
