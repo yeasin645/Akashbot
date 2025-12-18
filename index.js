@@ -15,7 +15,7 @@ const config = {
     adminId: parseInt(process.env.ADMIN_ID), 
     appUrl: process.env.APP_URL, // Render URL (উদা: https://bot-name.onrender.com)
     adminUsername: process.env.ADMIN_USERNAME || "Admin",
-    dbVersion: "3.0" // এটি পরিবর্তন করলেই ডাটাবেস কালেকশন রিসেট হয়ে সব তথ্য ডিলিট হবে
+    dbVersion: "1.3" // এটি পরিবর্তন করলেই ডাটাবেস কালেকশন রিসেট হয়ে সব তথ্য ডিলিট হবে
 };
 
 const bot = new TelegramBot(config.token, { polling: { autoStart: true } });
