@@ -1,4 +1,5 @@
+python-telegram-bot
 flask
-pymongo
 requests
-gunicorn
+pymongo
+dnspython
