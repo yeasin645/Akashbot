@@ -69,7 +69,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 
 # কনভারসেশন স্টেটসমূহ
 NAME, POSTER, YEAR, LANGUAGE, QUALITY, LINK, CONFIRM_MORE = range(7)
-CH_NAME, CH_LINK, S_CLICK, S_ZONE, S_REDEEM, S_UNPREMIUM = range(7, 13)
+CH_NAME, CH_LINK, S_CLICK, S_ZONE, S_REDEEM, S_UNPREMIUM, S_ADD_PREM_VAL, S_GEN_CODE_VAL, S_SET_OFFER_VAL = range(7, 16)
 
 # --- হেল্পার ফাংশন ---
 
@@ -147,10 +147,11 @@ async def menu_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "btn_admin_panel":
         if user_id == OWNER_ID:
             admin_kb = [
-                [InlineKeyboardButton("❌ Remove Premium", callback_data="start_unpremium_btn")],
+                [InlineKeyboardButton("➕ Add Premium", callback_data="start_add_prem_btn"), InlineKeyboardButton("🔑 Gen Code", callback_data="start_gen_code_btn")],
+                [InlineKeyboardButton("🏷 Set Offer", callback_data="start_set_offer_btn"), InlineKeyboardButton("❌ Remove Premium", callback_data="start_unpremium_btn")],
                 [InlineKeyboardButton("🗑 Delete Offer", callback_data="btn_del_offer_list")]
             ]
-            admin_msg = "🛠 **এডমিন প্যানেল:**\n\n`/gencode <Days> <Amount>`\n`/addpremium <ID> <Days>`\n`/setoffer Title|Price|Days`"
+            admin_msg = "🛠 **এডমিন প্যানেল:**\nনিচের বাটনগুলো ব্যবহার করে বট নিয়ন্ত্রণ করুন।"
             await query.message.reply_text(admin_msg, reply_markup=InlineKeyboardMarkup(admin_kb), parse_mode=ParseMode.MARKDOWN)
 
     elif query.data == "btn_del_offer_list":
@@ -168,44 +169,62 @@ async def menu_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
         offers_col.delete_one({"_id": ObjectId(query.data.split("_")[1])})
         await query.edit_message_text("✅ প্রিমিয়াম অফারটি ডিলিট হয়েছে।")
 
-# --- এডমিন কমান্ডস ---
+# --- এডমিন বাটন প্রসেস (নতুনভাবে যুক্ত করা হলো) ---
 
-async def add_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID: return
+# ১. প্রিমিয়াম অ্যাড বাটন
+async def start_add_prem(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text("👤 ইউজার আইডি এবং দিন সংখ্যা দিন (যেমন: `1234567 30`):", parse_mode=ParseMode.MARKDOWN)
+    return S_ADD_PREM_VAL
+
+async def save_add_prem(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        uid, days = int(context.args[0]), int(context.args[1])
+        args = update.message.text.split()
+        uid, days = int(args[0]), int(args[1])
         expiry = datetime.datetime.now() + datetime.timedelta(days=days)
         premium_col.update_one({"user_id": uid}, {"$set": {"expiry_date": expiry}}, upsert=True)
         time_text = get_detailed_time_string(expiry)
         await update.message.reply_text(f"✅ ইউজার {uid} প্রিমিয়াম করা হয়েছে।\n⏳ মেয়াদ: {time_text}")
-        try:
-            await context.bot.send_message(chat_id=uid, text=f"🎉 **অভিনন্দন! এডমিন আপনাকে প্রিমিয়াম মেম্বারশিপ দিয়েছেন।**\n\n⏳ **আপনার মোট সময়:** {time_text}", parse_mode=ParseMode.MARKDOWN)
+        try: await context.bot.send_message(chat_id=uid, text=f"🎉 **অভিনন্দন! এডমিন আপনাকে প্রিমিয়াম মেম্বারশিপ দিয়েছেন।**\n\n⏳ **আপনার মোট সময়:** {time_text}", parse_mode=ParseMode.MARKDOWN)
         except: pass
-    except: await update.message.reply_text("❌ ফরম্যাট: `/addpremium <ID> <Days>`")
+    except: await update.message.reply_text("❌ ভুল ফরম্যাট। সঠিক উদাহরণ: `123456 30`")
+    return ConversationHandler.END
 
-async def gen_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID: return
+# ২. কোড জেনারেট বাটন
+async def start_gen_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text("🔑 দিন সংখ্যা এবং কোড সংখ্যা দিন (যেমন: `30 5`):", parse_mode=ParseMode.MARKDOWN)
+    return S_GEN_CODE_VAL
+
+async def save_gen_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        days, count = int(context.args[0]), int(context.args[1])
+        args = update.message.text.split()
+        days, count = int(args[0]), int(args[1])
         codes = []
         for _ in range(count):
             c = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
             codes_col.insert_one({"code": c, "days": days})
             codes.append(f"`{c}`")
         await update.message.reply_text(f"✅ {days} দিনের {count}টি কোড তৈরি:\n\n" + "\n".join(codes), parse_mode=ParseMode.MARKDOWN)
-    except: await update.message.reply_text("❌ ফরম্যাট: `/gencode <Days> <Amount>`")
+    except: await update.message.reply_text("❌ ভুল ফরম্যাট। সঠিক উদাহরণ: `30 5`")
+    return ConversationHandler.END
 
-async def set_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID: return
+# ৩. অফার সেট বাটন
+async def start_set_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text("🏷 অফারের বিস্তারিত দিন (ফরম্যাট: `টাইটেল | দাম | দিন`):", parse_mode=ParseMode.MARKDOWN)
+    return S_SET_OFFER_VAL
+
+async def save_set_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        data = " ".join(context.args).split("|")
+        data = update.message.text.split("|")
         offers_col.insert_one({"title": data[0].strip(), "price": data[1].strip(), "days": data[2].strip()})
         await update.message.reply_text("✅ নতুন অফার যুক্ত হয়েছে।")
-    except: await update.message.reply_text("❌ ফরম্যাট: `/setoffer টাইটেল | দাম | দিন`")
+    except: await update.message.reply_text("❌ ভুল ফরম্যাট। সঠিক উদাহরণ: `মাসে ১ বার | ১০০ টাকা | ৩০`")
+    return ConversationHandler.END
 
-# --- আন-প্রিমিয়াম কনভারসেশন (বাটন লজিক) ---
+# ৪. আন-প্রিমিয়াম বাটন
 async def start_unpremium(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID: return ConversationHandler.END
     await update.callback_query.answer()
     await update.callback_query.message.reply_text("❌ যার প্রিমিয়াম বাতিল করবেন তার **User ID** দিন:")
     return S_UNPREMIUM
@@ -396,17 +415,24 @@ if __name__ == '__main__':
 
     # সাধারণ কমান্ড
     bot_app.add_handler(CommandHandler('start', start))
-    bot_app.add_handler(CommandHandler('addpremium', add_premium))
-    bot_app.add_handler(CommandHandler('gencode', gen_code))
-    bot_app.add_handler(CommandHandler('setoffer', set_offer))
     
     # Callback Handlers
     bot_app.add_handler(CallbackQueryHandler(menu_callback_handler, pattern="^(btn_|delch_|doff_)"))
 
-    # ১. আন-প্রিমিয়াম বাটন কনভারসেশন
+    # ১. এডমিন ফাংশনস (বাটন ভিত্তিক কনভারসেশন)
     bot_app.add_handler(ConversationHandler(
-        entry_points=[CallbackQueryHandler(start_unpremium, pattern="^start_unpremium_btn$")],
-        states={S_UNPREMIUM: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_unpremium)]},
+        entry_points=[
+            CallbackQueryHandler(start_add_prem, pattern="^start_add_prem_btn$"),
+            CallbackQueryHandler(start_gen_code, pattern="^start_gen_code_btn$"),
+            CallbackQueryHandler(start_set_offer, pattern="^start_set_offer_btn$"),
+            CallbackQueryHandler(start_unpremium, pattern="^start_unpremium_btn$")
+        ],
+        states={
+            S_ADD_PREM_VAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_add_prem)],
+            S_GEN_CODE_VAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_gen_code)],
+            S_SET_OFFER_VAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_set_offer)],
+            S_UNPREMIUM: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_unpremium)]
+        },
         fallbacks=[CommandHandler('cancel', cancel)]
     ))
 
