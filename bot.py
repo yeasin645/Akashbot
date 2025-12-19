@@ -98,12 +98,16 @@ async def is_authorized(user_id):
         else: premium_col.delete_one({"user_id": user_id})
     return False
 
-def get_main_menu_keyboard(user_id):
+# আইকন সহ কিবোর্ড জেনারেটর
+async def get_main_menu_keyboard(user_id):
+    is_prem = await is_authorized(user_id)
+    icon = "✅" if is_prem else "🔒"
+    
     kb = [
-        [InlineKeyboardButton("🎬 Create Movie Post", callback_data="start_post_btn"), InlineKeyboardButton("📊 My Status", callback_data="btn_status")],
+        [InlineKeyboardButton(f"{icon} Create Movie Post", callback_data="start_post_btn"), InlineKeyboardButton("📊 My Status", callback_data="btn_status")],
         [InlineKeyboardButton("💎 Premium Offers", callback_data="btn_offers"), InlineKeyboardButton("🔑 Redeem Code", callback_data="start_redeem_btn")],
-        [InlineKeyboardButton("⚙️ Click Limit", callback_data="start_click_btn"), InlineKeyboardButton("🔗 Monetag Zone", callback_data="start_zone_btn")],
-        [InlineKeyboardButton("📢 Channels", callback_data="btn_channels_list")]
+        [InlineKeyboardButton(f"{icon} Click Limit", callback_data="start_click_btn"), InlineKeyboardButton(f"{icon} Monetag Zone", callback_data="start_zone_btn")],
+        [InlineKeyboardButton(f"{icon} Channels", callback_data="btn_channels_list")]
     ]
     if user_id == OWNER_ID: kb.append([InlineKeyboardButton("🛠 Admin Panel", callback_data="btn_admin_panel")])
     return InlineKeyboardMarkup(kb)
@@ -112,12 +116,21 @@ def get_main_menu_keyboard(user_id):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    await update.message.reply_text(f"👋 হ্যালো {user.first_name}!\nআপনার বটের মেনু নিচে দেওয়া হলো:", reply_markup=get_main_menu_keyboard(user.id))
+    kb = await get_main_menu_keyboard(user.id)
+    await update.message.reply_text(f"👋 হ্যালো {user.first_name}!\nআপনার বটের মেনু নিচে দেওয়া হলো:", reply_markup=kb)
 
 async def menu_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = update.effective_user
     user_id = user.id
+    
+    # প্রিমিয়াম বাটন চেক
+    premium_buttons = ["start_post_btn", "start_click_btn", "start_zone_btn", "btn_channels_list", "start_addch_btn"]
+    if query.data in premium_buttons:
+        if not await is_authorized(user_id):
+            await query.answer("🚫 এটি ব্যবহার করতে প্রিমিয়াম সাবস্ক্রিপশন প্রয়োজন!", show_alert=True)
+            return
+
     await query.answer()
 
     if query.data == "btn_status":
@@ -138,7 +151,6 @@ async def menu_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await query.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
 
     elif query.data == "btn_channels_list":
-        if not await is_authorized(user_id): return
         chans = list(channels_col.find({"user_id": user_id}))
         kb = [[InlineKeyboardButton(f"❌ {c['name']}", callback_data=f"delch_{c['_id']}")] for c in chans]
         kb.append([InlineKeyboardButton("➕ Add New Channel", callback_data="start_addch_btn")])
@@ -169,12 +181,11 @@ async def menu_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
         offers_col.delete_one({"_id": ObjectId(query.data.split("_")[1])})
         await query.edit_message_text("✅ প্রিমিয়াম অফারটি ডিলিট হয়েছে।")
 
-# --- এডমিন বাটন প্রসেস (নতুনভাবে যুক্ত করা হলো) ---
+# --- এডমিন বাটন প্রসেস ---
 
-# ১. প্রিমিয়াম অ্যাড বাটন
 async def start_add_prem(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    await update.callback_query.message.reply_text("👤 ইউজার আইডি এবং দিন সংখ্যা দিন (যেমন: `1234567 30`):", parse_mode=ParseMode.MARKDOWN)
+    await update.callback_query.message.reply_text("👤 ইউজার আইডি এবং দিন সংখ্যা দিন (যেমন: `1234567 30`):")
     return S_ADD_PREM_VAL
 
 async def save_add_prem(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -184,16 +195,15 @@ async def save_add_prem(update: Update, context: ContextTypes.DEFAULT_TYPE):
         expiry = datetime.datetime.now() + datetime.timedelta(days=days)
         premium_col.update_one({"user_id": uid}, {"$set": {"expiry_date": expiry}}, upsert=True)
         time_text = get_detailed_time_string(expiry)
-        await update.message.reply_text(f"✅ ইউজার {uid} প্রিমিয়াম করা হয়েছে।\n⏳ মেয়াদ: {time_text}")
-        try: await context.bot.send_message(chat_id=uid, text=f"🎉 **অভিনন্দন! এডমিন আপনাকে প্রিমিয়াম মেম্বারশিপ দিয়েছেন।**\n\n⏳ **আপনার মোট সময়:** {time_text}", parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text(f"✅ ইউজার {uid} প্রিমিয়াম করা হয়েছে।")
+        try: await context.bot.send_message(chat_id=uid, text=f"🎉 **অভিনন্দন! আপনি প্রিমিয়াম মেম্বারশিপ পেয়েছেন।**\n⏳ মেয়াদ: {time_text}", parse_mode=ParseMode.MARKDOWN)
         except: pass
-    except: await update.message.reply_text("❌ ভুল ফরম্যাট। সঠিক উদাহরণ: `123456 30`")
+    except: await update.message.reply_text("❌ ভুল ফরম্যাট।")
     return ConversationHandler.END
 
-# ২. কোড জেনারেট বাটন
 async def start_gen_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    await update.callback_query.message.reply_text("🔑 দিন সংখ্যা এবং কোড সংখ্যা দিন (যেমন: `30 5`):", parse_mode=ParseMode.MARKDOWN)
+    await update.callback_query.message.reply_text("🔑 দিন সংখ্যা এবং কোড সংখ্যা দিন (যেমন: `30 5`):")
     return S_GEN_CODE_VAL
 
 async def save_gen_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -205,14 +215,13 @@ async def save_gen_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             c = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
             codes_col.insert_one({"code": c, "days": days})
             codes.append(f"`{c}`")
-        await update.message.reply_text(f"✅ {days} দিনের {count}টি কোড তৈরি:\n\n" + "\n".join(codes), parse_mode=ParseMode.MARKDOWN)
-    except: await update.message.reply_text("❌ ভুল ফরম্যাট। সঠিক উদাহরণ: `30 5`")
+        await update.message.reply_text(f"✅ কোড তৈরি:\n" + "\n".join(codes), parse_mode=ParseMode.MARKDOWN)
+    except: await update.message.reply_text("❌ ভুল ফরম্যাট।")
     return ConversationHandler.END
 
-# ৩. অফার সেট বাটন
 async def start_set_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    await update.callback_query.message.reply_text("🏷 অফারের বিস্তারিত দিন (ফরম্যাট: `টাইটেল | দাম | দিন`):", parse_mode=ParseMode.MARKDOWN)
+    await update.callback_query.message.reply_text("🏷 অফার দিন (টাইটেল | দাম | দিন):")
     return S_SET_OFFER_VAL
 
 async def save_set_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -220,34 +229,26 @@ async def save_set_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data = update.message.text.split("|")
         offers_col.insert_one({"title": data[0].strip(), "price": data[1].strip(), "days": data[2].strip()})
         await update.message.reply_text("✅ নতুন অফার যুক্ত হয়েছে।")
-    except: await update.message.reply_text("❌ ভুল ফরম্যাট। সঠিক উদাহরণ: `মাসে ১ বার | ১০০ টাকা | ৩০`")
+    except: await update.message.reply_text("❌ ভুল ফরম্যাট।")
     return ConversationHandler.END
 
-# ৪. আন-প্রিমিয়াম বাটন
 async def start_unpremium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    await update.callback_query.message.reply_text("❌ যার প্রিমিয়াম বাতিল করবেন তার **User ID** দিন:")
+    await update.callback_query.message.reply_text("❌ যার প্রিমিয়াম বাতিল করবেন তার ID দিন:")
     return S_UNPREMIUM
 
 async def save_unpremium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         uid = int(update.message.text)
-        res = premium_col.delete_one({"user_id": uid})
-        if res.deleted_count > 0:
-            await update.message.reply_text(f"✅ ইউজার `{uid}` এখন থেকে আর প্রিমিয়াম মেম্বার নন।")
-            try: await context.bot.send_message(uid, "🚫 এডমিন আপনার প্রিমিয়াম সাবস্ক্রিপশন বাতিল করেছেন।")
-            except: pass
-        else: await update.message.reply_text("❌ এই আইডি প্রিমিয়াম তালিকায় নেই।")
-    except: await update.message.reply_text("❌ সঠিক আইডি দিন।")
+        premium_col.delete_one({"user_id": uid})
+        await update.message.reply_text(f"✅ ইউজার `{uid}` এখন সাধারণ মেম্বার।")
+    except: await update.message.reply_text("❌ আইডি ভুল।")
     return ConversationHandler.END
 
-# --- মুভি পোস্ট প্রসেস ---
+# --- মুভি পোস্ট ও অন্যান্য প্রসেস ---
+
 async def start_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_authorized(update.effective_user.id):
-        msg = "🚫 প্রিমিয়াম সাবস্ক্রিপশন প্রয়োজন। /offers লিখে অফার দেখুন।"
-        if update.callback_query: await update.callback_query.message.reply_text(msg)
-        else: await update.message.reply_text(msg)
-        return ConversationHandler.END
+    # স্ট্যাটাস চেক অলরেডি Callback Handler এ করা হয়েছে, এখানে জাস্ট ফাংশনালিটি শুরু হবে
     context.user_data['items'] = []
     text = "🎬 মুভির নাম লিখুন:"
     if update.callback_query: await update.callback_query.message.reply_text(text)
@@ -261,28 +262,28 @@ async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_poster(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['poster'] = update.message.text
-    await update.message.reply_text("📅 মুভির সাল (Year) লিখুন (যেমন: 2024):")
+    await update.message.reply_text("📅 মুভির সাল (Year):")
     return YEAR
 
 async def get_year(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['year'] = update.message.text
-    await update.message.reply_text("🌐 মুভির ভাষা কী?:")
+    await update.message.reply_text("🌐 মুভির ভাষা:")
     return LANGUAGE
 
 async def get_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['lang'] = update.message.text
-    await update.message.reply_text("💿 কোয়ালিটি লিখুন (যেমন: 720p):")
+    await update.message.reply_text("💿 কোয়ালিটি (যেমন: 720p):")
     return QUALITY
 
 async def get_quality(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['cq'] = update.message.text
-    await update.message.reply_text(f"🔗 {update.message.text} এর জন্য মেইন ডাউনলোড লিংক দিন:")
+    await update.message.reply_text(f"🔗 {update.message.text} ডাউনলোড লিংক দিন:")
     return LINK
 
 async def get_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['items'].append({"q": context.user_data['cq'], "l": update.message.text})
     kb = [[InlineKeyboardButton("➕ আরও কোয়ালিটি", callback_data="add_q_c")], [InlineKeyboardButton("✅ Done", callback_data="done_q_c")]]
-    await update.message.reply_text("যুক্ত হয়েছে। আরও কোয়ালিটি যোগ করবেন?", reply_markup=InlineKeyboardMarkup(kb))
+    await update.message.reply_text("যুক্ত হয়েছে। আরও করবেন?", reply_markup=InlineKeyboardMarkup(kb))
     return CONFIRM_MORE
 
 async def post_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -330,13 +331,11 @@ function processClick(finalUrl) {{
         p_id = previews_col.insert_one({"html": raw_html}).inserted_id
         p_url = f"{os.environ.get('APP_URL')}/preview/{p_id}"
         kb = [[InlineKeyboardButton("👁️ Live Preview Link", url=p_url)]]
-        await query.message.reply_text("✅ পোস্ট তৈরি হয়েছে!\nনিচের লিংকে ক্লিক করে প্রিভিউ দেখুন এবং কোডটি কপি করুন।", reply_markup=InlineKeyboardMarkup(kb))
+        await query.message.reply_text("✅ পোস্ট তৈরি হয়েছে!", reply_markup=InlineKeyboardMarkup(kb))
         await query.message.reply_text(f"<pre><code>{html.escape(raw_html)}</code></pre>", parse_mode=ParseMode.HTML)
         return ConversationHandler.END
 
-# ২. ক্লিক সেটিংস
 async def start_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_authorized(update.effective_user.id): return ConversationHandler.END
     text = "🔢 কতটি ক্লিক বা অ্যাড দেখাবে? (সংখ্যা দিন):"
     if update.callback_query: await update.callback_query.message.reply_text(text)
     else: await update.message.reply_text(text)
@@ -350,9 +349,7 @@ async def save_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except: await update.message.reply_text("❌ শুধু সংখ্যা দিন।")
     return ConversationHandler.END
 
-# ৩. জোন সেটিংস
 async def start_zone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_authorized(update.effective_user.id): return ConversationHandler.END
     text = "🔗 আপনার Monetag Direct Link দিন:"
     if update.callback_query: await update.callback_query.message.reply_text(text)
     else: await update.message.reply_text(text)
@@ -363,12 +360,8 @@ async def save_zone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ মনিটেগ জোন সফলভাবে সেভ হয়েছে।")
     return ConversationHandler.END
 
-# ৪. চ্যানেল অ্যাড
 async def start_addch(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_authorized(update.effective_user.id): return ConversationHandler.END
-    text = "📢 চ্যানেলের নাম দিন:"
-    if update.callback_query: await update.callback_query.message.reply_text(text)
-    else: await update.message.reply_text(text)
+    await update.message.reply_text("📢 চ্যানেলের নাম দিন:")
     return CH_NAME
 
 async def save_ch_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -381,7 +374,6 @@ async def save_ch_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ চ্যানেল সেভ হয়েছে।")
     return ConversationHandler.END
 
-# ৫. রিডিম কোড প্রসেস
 async def start_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "🔑 আপনার প্রিমিয়াম রিডিম কোডটি দিন:"
     if update.callback_query: await update.callback_query.message.reply_text(text)
@@ -398,12 +390,13 @@ async def save_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE):
         new_exp = base + datetime.timedelta(days=int(data['days']))
         premium_col.update_one({"user_id": uid}, {"$set": {"expiry_date": new_exp}}, upsert=True)
         codes_col.delete_one({"code": code})
-        await update.message.reply_text(f"🎉 সফল! আপনার প্রিমিয়াম এক্টিভেট হয়েছে।\n⏳ নতুন মেয়াদ: {get_detailed_time_string(new_exp)}")
+        await update.message.reply_text(f"🎉 প্রিমিয়াম এক্টিভেট হয়েছে!\n⏳ নতুন মেয়াদ: {get_detailed_time_string(new_exp)}")
     else: await update.message.reply_text("❌ ভুল বা ব্যবহৃত কোড।")
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("বাতিল হয়েছে।", reply_markup=get_main_menu_keyboard(update.effective_user.id))
+    kb = await get_main_menu_keyboard(update.effective_user.id)
+    await update.message.reply_text("বাতিল হয়েছে।", reply_markup=kb)
     return ConversationHandler.END
 
 # --- মেইন রানার ---
@@ -413,13 +406,10 @@ if __name__ == '__main__':
     threading.Thread(target=keep_alive, daemon=True).start()
     bot_app = ApplicationBuilder().token(TOKEN).build()
 
-    # সাধারণ কমান্ড
     bot_app.add_handler(CommandHandler('start', start))
-    
-    # Callback Handlers
-    bot_app.add_handler(CallbackQueryHandler(menu_callback_handler, pattern="^(btn_|delch_|doff_)"))
+    bot_app.add_handler(CallbackQueryHandler(menu_callback_handler, pattern="^(btn_|delch_|doff_)$"))
 
-    # ১. এডমিন ফাংশনস (বাটন ভিত্তিক কনভারসেশন)
+    # এডমিন কনভারসেশন
     bot_app.add_handler(ConversationHandler(
         entry_points=[
             CallbackQueryHandler(start_add_prem, pattern="^start_add_prem_btn$"),
@@ -436,7 +426,7 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel)]
     ))
 
-    # ২. মুভি পোস্ট কনভারসেশন
+    # মুভি পোস্ট কনভারসেশন
     bot_app.add_handler(ConversationHandler(
         entry_points=[CommandHandler('post', start_post), CallbackQueryHandler(start_post, pattern="^start_post_btn$")],
         states={
@@ -451,33 +441,36 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel)]
     ))
 
-    # ৩. ক্লিক লিমিট কনভারসেশন
+    # ক্লিক লিমিট কনভারসেশন
     bot_app.add_handler(ConversationHandler(
         entry_points=[CommandHandler('setclick', start_click), CallbackQueryHandler(start_click, pattern="^start_click_btn$")],
         states={S_CLICK:[MessageHandler(filters.TEXT & ~filters.COMMAND, save_click)]},
         fallbacks=[CommandHandler('cancel', cancel)]
     ))
 
-    # ৪. মনিটেগ জোন কনভারসেশন
+    # মনিটেগ জোন কনভারসেশন
     bot_app.add_handler(ConversationHandler(
         entry_points=[CommandHandler('addzone', start_zone), CallbackQueryHandler(start_zone, pattern="^start_zone_btn$")],
         states={S_ZONE:[MessageHandler(filters.TEXT & ~filters.COMMAND, save_zone)]},
         fallbacks=[CommandHandler('cancel', cancel)]
     ))
 
-    # ৫. চ্যানেল অ্যাড কনভারসেশন
+    # চ্যানেল অ্যাড কনভারসেশন
     bot_app.add_handler(ConversationHandler(
         entry_points=[CommandHandler('addchannel', start_addch), CallbackQueryHandler(start_addch, pattern="^start_addch_btn$")],
         states={CH_NAME:[MessageHandler(filters.TEXT & ~filters.COMMAND, save_ch_name)], CH_LINK:[MessageHandler(filters.TEXT & ~filters.COMMAND, save_ch_link)]},
         fallbacks=[CommandHandler('cancel', cancel)]
     ))
 
-    # ৬. রিডিম কোড কনভারসেশন
+    # রিডিম কোড কনভারসেশন
     bot_app.add_handler(ConversationHandler(
         entry_points=[CommandHandler('redeem', start_redeem), CallbackQueryHandler(start_redeem, pattern="^start_redeem_btn$")],
         states={S_REDEEM:[MessageHandler(filters.TEXT & ~filters.COMMAND, save_redeem)]},
         fallbacks=[CommandHandler('cancel', cancel)]
     ))
+
+    # ক্যাচ অল কলব্যাক হ্যান্ডলার (তালা দেওয়া বাটনের অ্যালার্টের জন্য)
+    bot_app.add_handler(CallbackQueryHandler(menu_callback_handler, pattern="^.*_btn$"))
 
     print("বট চলছে...")
     bot_app.run_polling()
