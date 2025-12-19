@@ -22,13 +22,13 @@ from telegram.ext import (
     CallbackQueryHandler
 )
 
-# --- রেন্ডার ও ফ্লস্ক সেটিংস (লাইভ প্রিভিউ ও স্লিপ প্রিভেনশন) ---
+# --- রেন্ডার ও ফ্লস্ক সেটিংস ---
 app = Flask(__name__)
 
-# ডাটাবেজ কানেকশন (MongoDB)
+# ডাটাবেজ কানেকশন
 MONGO_URI = os.environ.get('MONGO_URI')
 client = MongoClient(MONGO_URI)
-db = client['movie_bot_pro_v12']
+db = client['movie_bot_final_v13']
 channels_col = db['channels']
 settings_col = db['settings']
 premium_col = db['premium_users']
@@ -48,18 +48,14 @@ def preview_page(p_id):
         return "<h1>Invalid Preview ID!</h1>", 400
 
 @app.route('/')
-def home(): 
-    return "বট সচল আছে! (Master Bot is Online)", 200
+def home(): return "বট সচল আছে! (Master Bot Online)", 200
 
 def keep_alive():
-    """রেন্ডার স্লিপ মোড ঠেকাতে ৫ মিনিট পরপর নিজেকে পিং করবে"""
     url = os.environ.get('APP_URL') 
     if not url: return
     while True:
-        try:
-            requests.get(url)
-        except:
-            pass
+        try: requests.get(url)
+        except: pass
         time.sleep(300)
 
 def run_flask():
@@ -73,10 +69,13 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 
 # কনভারসেশন স্টেটসমূহ
 NAME, POSTER, YEAR, LANGUAGE, QUALITY, LINK, CONFIRM_MORE = range(7)
-CH_NAME, CH_LINK, SET_ZONE, SET_CLICK = range(7, 11)
+CH_NAME, CH_LINK = range(7, 9)
+S_CLICK = 10
+S_ZONE = 11
 
-# --- সময় ক্যালকুলেশন হেল্পার ---
-def get_detailed_time_string(expiry_date):
+# --- হেল্পার ফাংশন ---
+
+def get_time_string(expiry_date):
     delta = expiry_date - datetime.datetime.now()
     if delta.total_seconds() <= 0: return "মেয়াদ শেষ"
     days = delta.days
@@ -93,7 +92,6 @@ def get_detailed_time_string(expiry_date):
     parts.append(f"{seconds} সেকেন্ড")
     return ", ".join(parts)
 
-# --- পারমিশন চেক ---
 async def is_authorized(user_id):
     if user_id == OWNER_ID: return True
     user = premium_col.find_one({"user_id": user_id})
@@ -102,61 +100,63 @@ async def is_authorized(user_id):
         else: premium_col.delete_one({"user_id": user_id})
     return False
 
-# --- মেনু কিবোর্ড ---
 def get_main_menu(user_id):
     kb = [
-        [InlineKeyboardButton("🎬 Create Post", callback_data="btn_post"), InlineKeyboardButton("📊 My Status", callback_data="btn_status")],
-        [InlineKeyboardButton("💎 Offers", callback_data="btn_offers"), InlineKeyboardButton("🔑 Redeem Code", callback_data="btn_redeem_start")],
-        [InlineKeyboardButton("⚙️ Click Set", callback_data="sub_click_m"), InlineKeyboardButton("📢 Channels", callback_data="btn_ch_menu")]
+        [InlineKeyboardButton("🎬 Create Post", callback_data="m_post"), InlineKeyboardButton("📊 My Status", callback_data="m_status")],
+        [InlineKeyboardButton("💎 Offers", callback_data="m_offers"), InlineKeyboardButton("🔑 Redeem Code", callback_data="m_redeem")],
+        [InlineKeyboardButton("⚙️ Click Limit", callback_data="m_set_click"), InlineKeyboardButton("🔗 Monetag Zone", callback_data="m_set_zone")],
+        [InlineKeyboardButton("📢 Channels", callback_data="m_channels")]
     ]
-    if user_id == OWNER_ID:
-        kb.append([InlineKeyboardButton("🛠 Admin Panel", callback_data="btn_admin")])
+    if user_id == OWNER_ID: kb.append([InlineKeyboardButton("🛠 Admin Panel", callback_data="m_admin")])
     return InlineKeyboardMarkup(kb)
 
-# --- কমান্ড ও বাটন হ্যান্ডলারস ---
+# --- কমান্ড ও বাটন হ্যান্ডলার ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    await update.message.reply_text(f"👋 হ্যালো {user.first_name}!\nআপনার মুভি পোস্ট জেনারেটর মেনু:", reply_markup=get_main_menu(user.id))
+    await update.message.reply_text(f"👋 হ্যালো {user.first_name}!\nনিচের বাটন ব্যবহার করুন:", reply_markup=get_main_menu(user.id))
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = update.effective_user
-    user_id = user.id
     await query.answer()
 
-    if query.data == "btn_post": await query.message.reply_text("🎬 নতুন পোস্ট তৈরি করতে /post লিখুন।")
-    elif query.data == "btn_status":
-        premium_user = premium_col.find_one({"user_id": user_id})
-        if user_id == OWNER_ID: membership, expiry = "👑 ওনার", "♾️ অনন্তকাল"
-        elif premium_user: membership, expiry = "💎 প্রিমিয়াম", get_detailed_time_string(premium_user['expiry_date'])
-        else: membership, expiry = "👤 সাধারণ", "মেয়াদ নেই"
-        msg = f"📊 **প্রোফাইল:**\n👤 নাম: {user.full_name}\n🆔 আইডি: `{user_id}`\n🌟 টাইপ: {membership}\n⏳ মেয়াদ: {expiry}"
+    if query.data == "m_post": await query.message.reply_text("🎬 পোস্ট তৈরি করতে /post লিখুন।")
+    elif query.data == "m_status":
+        premium_user = premium_col.find_one({"user_id": user.id})
+        membership = "👑 ওনার" if user.id == OWNER_ID else ("💎 প্রিমিয়াম" if premium_user else "👤 সাধারণ")
+        expiry = "♾️ অনন্তকাল" if user.id == OWNER_ID else (get_time_string(premium_user['expiry_date']) if premium_user else "মেয়াদ নেই")
+        msg = f"📊 **প্রোফাইল:**\n👤 নাম: {user.full_name}\n🆔 আইডি: `{user.id}`\n🌟 টাইপ: {membership}\n⏳ মেয়াদ: {expiry}"
         await query.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
-    elif query.data == "btn_offers":
+    elif query.data == "m_offers":
         offers = list(offers_col.find())
         msg = "💎 **প্রিমিয়াম অফার:**\n\n" + ("নেই।" if not offers else "\n".join([f"📌 {o['title']} | {o['price']} | {o['days']} দিন" for o in offers]))
         kb = [[InlineKeyboardButton("💬 কন্টাক্ট এডমিন", url=f"https://t.me/{OWNER_USERNAME}")]]
         await query.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
-    elif query.data == "btn_redeem_start": await query.message.reply_text("🔑 কোড রিডিম করতে লিখুন: `/redeem YOUR_CODE`")
-    elif query.data == "sub_click_m": await query.message.reply_text("লিখুন: /setclick <সংখ্যা> অথবা /addzone <লিংক>")
-    elif query.data == "btn_ch_menu":
-        if not await is_authorized(user_id): return
-        chans = list(channels_col.find({"user_id": user_id}))
-        kb = [[InlineKeyboardButton(f"❌ {c['name']}", callback_data=f"delch_{c['_id']}")] for c in chans]
-        kb.append([InlineKeyboardButton("➕ Add New", callback_data="btn_add_ch_start")])
-        await query.message.reply_text("📢 চ্যানেল ম্যানেজমেন্ট:", reply_markup=InlineKeyboardMarkup(kb))
-    elif query.data == "btn_add_ch_start": await query.message.reply_text("লিখুন: /addchannel")
-    elif query.data == "btn_admin":
-        if user_id == OWNER_ID: await query.message.reply_text("🛠 **এডমিন কমান্ড:**\n/gencode <Days> <Amount>\n/addpremium <ID> <Days>\n/setoffer Title|Price|Days\n/deloffer")
+    elif query.data == "m_redeem": await query.message.reply_text("🔑 কোড রিডিম করতে লিখুন: `/redeem YOUR_CODE`")
+    elif query.data == "m_set_click": await query.message.reply_text("🔢 ক্লিক সংখ্যা সেট করতে /setclick লিখুন।")
+    elif query.data == "m_set_zone": await query.message.reply_text("🔗 মনিটেগ জোন সেট করতে /addzone লিখুন।")
+    elif query.data == "m_channels":
+        if not await is_authorized(user.id): return
+        chans = list(channels_col.find({"user_id": user.id}))
+        if not chans:
+            kb = [[InlineKeyboardButton("➕ Add New Channel", callback_data="m_add_ch")]]
+            await query.message.reply_text("কোনো চ্যানেল নেই।", reply_markup=InlineKeyboardMarkup(kb))
+        else:
+            kb = [[InlineKeyboardButton(f"❌ {c['name']}", callback_data=f"delch_{c['_id']}")] for c in chans]
+            kb.append([InlineKeyboardButton("➕ Add More", callback_data="m_add_ch")])
+            await query.message.reply_text("📢 আপনার চ্যানেলসমূহ:", reply_markup=InlineKeyboardMarkup(kb))
+    elif query.data == "m_add_ch": await query.message.reply_text("চ্যানেল অ্যাড করতে /addchannel লিখুন।")
+    elif query.data == "m_admin":
+        if user.id == OWNER_ID: await query.message.reply_text("🛠 **এডমিন কমান্ড:**\n/gencode <Days> <Amount>\n/addpremium <ID> <Days>\n/setoffer Title|Price|Days\n/deloffer")
     elif query.data.startswith("delch_"):
         channels_col.delete_one({"_id": ObjectId(query.data.split("_")[1])})
-        await query.edit_message_text("✅ ডিলিট হয়েছে।")
+        await query.edit_message_text("✅ চ্যানেল ডিলিট হয়েছে।")
     elif query.data.startswith("deloff_"):
         offers_col.delete_one({"_id": ObjectId(query.data.split("_")[1])})
         await query.edit_message_text("✅ অফার ডিলিট হয়েছে।")
 
-# --- এডমিন লজিক ---
+# --- এডমিন ও রিডিম লজিক ---
 
 async def add_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
@@ -164,9 +164,7 @@ async def add_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
         uid, days = int(context.args[0]), int(context.args[1])
         expiry = datetime.datetime.now() + datetime.timedelta(days=days)
         premium_col.update_one({"user_id": uid}, {"$set": {"expiry_date": expiry}}, upsert=True)
-        await update.message.reply_text(f"✅ {uid} এখন প্রিমিয়াম। মেয়াদ: {get_detailed_time_string(expiry)}")
-        try: await context.bot.send_message(chat_id=uid, text=f"🎉 অভিনন্দন! এডমিন আপনাকে প্রিমিয়াম দিয়েছেন।\n⏳ মেয়াদ: {get_detailed_time_string(expiry)}")
-        except: pass
+        await update.message.reply_text(f"✅ ইউজার {uid} প্রিমিয়াম হয়েছে। মেয়াদ: {get_time_string(expiry)}")
     except: await update.message.reply_text("❌ /addpremium <ID> <Days>")
 
 async def gen_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -178,7 +176,7 @@ async def gen_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             c = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
             codes_col.insert_one({"code": c, "days": days})
             codes.append(f"`{c}`")
-        await update.message.reply_text(f"✅ কোডসমূহ:\n" + "\n".join(codes), parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text("✅ কোডসমূহ:\n" + "\n".join(codes), parse_mode=ParseMode.MARKDOWN)
     except: await update.message.reply_text("❌ /gencode <Days> <Amount>")
 
 async def set_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -194,77 +192,77 @@ async def redeem(update: Update, context: ContextTypes.DEFAULT_TYPE):
         code = context.args[0]
         data = codes_col.find_one({"code": code})
         if data:
-            uid, days = update.effective_user.id, int(data['days'])
+            uid = update.effective_user.id
             cur = premium_col.find_one({"user_id": uid})
             base = cur['expiry_date'] if cur and cur['expiry_date'] > datetime.datetime.now() else datetime.datetime.now()
-            new_exp = base + datetime.timedelta(days=days)
+            new_exp = base + datetime.timedelta(days=int(data['days']))
             premium_col.update_one({"user_id": uid}, {"$set": {"expiry_date": new_exp}}, upsert=True)
             codes_col.delete_one({"code": code})
-            await update.message.reply_text(f"🎉 রিডিম সফল! মোট মেয়াদ: {get_detailed_time_string(new_exp)}")
+            await update.message.reply_text(f"🎉 সফল! মেয়াদ: {get_time_string(new_exp)}")
         else: await update.message.reply_text("❌ ভুল কোড।")
     except: await update.message.reply_text("❌ /redeem YOURCODE")
 
-# --- মুভি পোস্ট সিস্টেম ---
+# --- মুভি পোস্ট কনভারসেশন (Unlimited Quality + Year + Preview) ---
 
 async def start_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_authorized(update.effective_user.id):
         await update.message.reply_text("🚫 প্রিমিয়াম সাবস্ক্রিপশন প্রয়োজন।")
         return ConversationHandler.END
-    context.user_data['movie_items'] = []
+    context.user_data['items'] = []
     await update.message.reply_text("🎬 মুভির নাম লিখুন:")
     return NAME
 
 async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['m_name'] = update.message.text
-    await update.message.reply_text("🖼️ পোস্টার লিংক দিন:")
+    context.user_data['name'] = update.message.text
+    await update.message.reply_text("🖼️ পোস্টার ইমেজ লিংক দিন:")
     return POSTER
 
 async def get_poster(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['m_poster'] = update.message.text
+    context.user_data['poster'] = update.message.text
     await update.message.reply_text("📅 মুভির সাল (Year) লিখুন:")
     return YEAR
 
 async def get_year(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['m_year'] = update.message.text
+    context.user_data['year'] = update.message.text
     await update.message.reply_text("🌐 ভাষা কী?:")
     return LANGUAGE
 
 async def get_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['m_lang'] = update.message.text
+    context.user_data['lang'] = update.message.text
     await update.message.reply_text("💿 কোয়ালিটি লিখুন (যেমন: 720p):")
     return QUALITY
 
 async def get_quality(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['current_q'] = update.message.text
-    await update.message.reply_text(f"🔗 {update.message.text} এর লিংক দিন:")
+    context.user_data['cq'] = update.message.text
+    await update.message.reply_text(f"🔗 {update.message.text} এর ডাউনলোড লিংক দিন:")
     return LINK
 
 async def get_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['movie_items'].append({"quality": context.user_data['current_q'], "link": update.message.text})
-    kb = [[InlineKeyboardButton("➕ Add More", callback_data="add_q_c")], [InlineKeyboardButton("✅ Done", callback_data="done_q_c")]]
+    context.user_data['items'].append({"q": context.user_data['cq'], "l": update.message.text})
+    kb = [[InlineKeyboardButton("➕ Add More", callback_data="add_q")], [InlineKeyboardButton("✅ Done", callback_data="done_q")]]
     await update.message.reply_text("যুক্ত হয়েছে। আরও কোয়ালিটি দিবেন?", reply_markup=InlineKeyboardMarkup(kb))
     return CONFIRM_MORE
 
-async def post_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def post_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    if query.data == "add_q_c":
+    if query.data == "add_q":
         await query.message.reply_text("💿 পরবর্তী কোয়ালিটি লিখুন:")
         return QUALITY
-    elif query.data == "done_q_c":
+    elif query.data == "done_q":
         uid, data = update.effective_user.id, context.user_data
         setts = settings_col.find_one({"user_id": uid}) or {"monetag_link": "#", "click_limit": 1}
         chans = list(channels_col.find({"user_id": uid}))
         
         ch_html = "".join([f'<a href="{c["url"]}" style="background:#333;color:#fff;padding:5px 10px;margin:2px;text-decoration:none;border-radius:3px;font-size:12px;display:inline-block;">{c["name"]}</a>' for c in chans])
-        btns_html = "".join([f'<div style="margin-bottom:10px;"><button class="dl-btn" onclick="processClick(\'{i["link"]}\')" style="background:#d9534f;color:#fff;padding:12px 20px;border:none;border-radius:5px;font-weight:bold;width:100%;cursor:pointer;">📥 Download {i["quality"]}</button></div>' for i in data['movie_items']])
+        btns_html = "".join([f'<div style="margin-bottom:10px;"><button class="dl-btn" onclick="processClick(\'{i["l"]}\')" style="background:#d9534f;color:#fff;padding:12px 20px;border:none;border-radius:5px;font-weight:bold;width:100%;cursor:pointer;">📥 Download {i["q"]}</button></div>' for i in data['items']])
 
         raw_html = f"""
 <!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body style="background:#f4f4f4; display:flex; justify-content:center; padding:20px;">
 <div style="text-align:center;border:2px solid #eee;padding:20px;border-radius:15px;font-family:sans-serif;max-width:450px;width:100%;background:#fff;box-shadow:0 5px 15px rgba(0,0,0,0.1);">
-    <img src="{data['m_poster']}" style="width:100%;border-radius:10px;margin-bottom:15px;" />
-    <h2 style="color:#222;margin:5px 0;">{data['m_name']} ({data['m_year']})</h2>
-    <p style="color:#555;margin-bottom:15px;"><b>Language:</b> {data['m_lang']}</p>
+    <img src="{data['poster']}" style="width:100%;border-radius:10px;margin-bottom:15px;" />
+    <h2 style="color:#222;margin:5px 0;">{data['name']} ({data['year']})</h2>
+    <p style="color:#555;margin-bottom:15px;"><b>Language:</b> {data['lang']}</p>
     <div style="background:#f9f9f9;padding:15px;border-radius:10px;border:1px dashed #ccc;margin-bottom:15px;">
         <p id="counter-text" style="font-weight:bold;color:#d9534f;margin-bottom:10px;">Steps: 0 / {setts['click_limit']}</p>
         <div style="width:100%;background:#ddd;height:8px;border-radius:5px;margin-bottom:15px;overflow:hidden;">
@@ -290,10 +288,50 @@ function processClick(finalUrl) {{
         
         p_id = previews_col.insert_one({"html": raw_html}).inserted_id
         p_url = f"{os.environ.get('APP_URL')}/preview/{p_id}"
-        kb = [[InlineKeyboardButton("👁️ Live Preview Link", url=p_url)]]
+        kb = [[InlineKeyboardButton("👁️ Live Preview", url=p_url)]]
         await query.message.reply_text("✅ পোস্ট তৈরি হয়েছে!\nনিচের লিংকে ক্লিক করে প্রিভিউ দেখুন।", reply_markup=InlineKeyboardMarkup(kb))
         await query.message.reply_text(f"<pre><code>{html.escape(raw_html)}</code></pre>", parse_mode=ParseMode.HTML)
         return ConversationHandler.END
+
+# --- সেটিংস সেভিং লজিক (Fixing the Save Issues) ---
+
+async def set_click_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_authorized(update.effective_user.id): return ConversationHandler.END
+    await update.message.reply_text("🔢 কতটি ক্লিক বা অ্যাড দেখাবে? (সংখ্যা দিন):")
+    return S_CLICK
+
+async def save_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        val = int(update.message.text)
+        settings_col.update_one({"user_id": update.effective_user.id}, {"$set": {"click_limit": val}}, upsert=True)
+        await update.message.reply_text(f"✅ সফলভাবে {val}টি ক্লিক সেট করা হয়েছে।")
+    except: await update.message.reply_text("❌ শুধুমাত্র সংখ্যা দিন।")
+    return ConversationHandler.END
+
+async def set_zone_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_authorized(update.effective_user.id): return ConversationHandler.END
+    await update.message.reply_text("🔗 আপনার Monetag Direct Link দিন:")
+    return S_ZONE
+
+async def save_zone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    settings_col.update_one({"user_id": update.effective_user.id}, {"$set": {"monetag_link": update.message.text}}, upsert=True)
+    await update.message.reply_text("✅ মনিটেগ জোন সফলভাবে সেভ হয়েছে।")
+    return ConversationHandler.END
+
+async def add_ch_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_authorized(update.effective_user.id): return ConversationHandler.END
+    await update.message.reply_text("📢 চ্যানেলের নাম দিন:")
+    return CH_NAME
+
+async def save_ch_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['cn'] = update.message.text
+    await update.message.reply_text("🔗 চ্যানেলের লিংক দিন:")
+    return CH_LINK
+
+async def save_ch_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    channels_col.insert_one({"user_id": update.effective_user.id, "name": context.user_data['cn'], "url": update.message.text})
+    await update.message.reply_text("✅ চ্যানেল সফলভাবে অ্যাড হয়েছে।")
+    return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("বাতিল হয়েছে।", reply_markup=get_main_menu(update.effective_user.id))
@@ -311,12 +349,49 @@ if __name__ == '__main__':
     bot_app.add_handler(CommandHandler('addpremium', add_premium))
     bot_app.add_handler(CommandHandler('gencode', gen_code))
     bot_app.add_handler(CommandHandler('setoffer', set_offer))
-    bot_app.add_handler(CallbackQueryHandler(menu_callback, pattern="^(btn_|sub_|delch_|deloff_|add_q_c|done_q_c)"))
+    bot_app.add_handler(CommandHandler('deloffer', lambda u,c: query.message.reply_text("বট মেনু থেকে ডিলিট করুন।")))
+    
+    # Callback Handlers
+    bot_app.add_handler(CallbackQueryHandler(menu_callback, pattern="^(m_|delch_|deloff_|done_q|add_q)"))
 
-    # কনভারসেশনস
-    bot_app.add_handler(ConversationHandler(entry_points=[CommandHandler('post', start_post)], states={NAME:[MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)], POSTER:[MessageHandler(filters.TEXT & ~filters.COMMAND, get_poster)], YEAR:[MessageHandler(filters.TEXT & ~filters.COMMAND, get_year)], LANGUAGE:[MessageHandler(filters.TEXT & ~filters.COMMAND, get_language)], QUALITY:[MessageHandler(filters.TEXT & ~filters.COMMAND, get_quality)], LINK:[MessageHandler(filters.TEXT & ~filters.COMMAND, get_link)], CONFIRM_MORE:[CallbackQueryHandler(post_callback_handler, pattern="^(add_q_c|done_q_c)$")]}, fallbacks=[CommandHandler('cancel', cancel)]))
-    bot_app.add_handler(ConversationHandler(entry_points=[CommandHandler('setclick', lambda u,c: (u.message.reply_text("🔢 সংখ্যা:"), SET_CLICK)[1])], states={SET_CLICK:[MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u,c: (settings_col.update_one({"user_id":u.effective_user.id},{"$set":{"click_limit":int(u.message.text)}},upsert=True), u.message.reply_text("✅ সেট হয়েছে।"), ConversationHandler.END)[2])]}, fallbacks=[CommandHandler('cancel', cancel)]))
-    bot_app.add_handler(ConversationHandler(entry_points=[CommandHandler('addzone', lambda u,c: (u.message.reply_text("🔗 Monetag Link:"), SET_ZONE)[1])], states={SET_ZONE:[MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u,c: (settings_col.update_one({"user_id":u.effective_user.id},{"$set":{"monetag_link":u.message.text}},upsert=True), u.message.reply_text("✅ সেট হয়েছে।"), ConversationHandler.END)[2])]}, fallbacks=[CommandHandler('cancel', cancel)]))
-    bot_app.add_handler(ConversationHandler(entry_points=[CommandHandler('addchannel', lambda u,c: (u.message.reply_text("📢 নাম:"), CH_NAME)[1])], states={CH_NAME:[MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u,c: (c.user_data.update({"cn":u.message.text}), u.message.reply_text("🔗 লিংক:"), CH_LINK)[2])], CH_LINK:[MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u,c: (channels_col.insert_one({"user_id":u.effective_user.id,"name":c.user_data["cn"],"url":u.message.text}), u.message.reply_text("✅ সেভ।"), ConversationHandler.END)[2])]}, fallbacks=[CommandHandler('cancel', cancel)]))
+    # মুভি পোস্ট কনভারসেশন
+    bot_app.add_handler(ConversationHandler(
+        entry_points=[CommandHandler('post', start_post)],
+        states={
+            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
+            POSTER: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_poster)],
+            YEAR: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_year)],
+            LANGUAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_language)],
+            QUALITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_quality)],
+            LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_link)],
+            CONFIRM_MORE: [CallbackQueryHandler(post_callback, pattern="^(add_q|done_q)$")]
+        },
+        fallbacks=[CommandHandler('cancel', cancel)]
+    ))
 
+    # ক্লিক সেটিংস কনভারসেশন
+    bot_app.add_handler(ConversationHandler(
+        entry_points=[CommandHandler('setclick', set_click_handler)],
+        states={S_CLICK: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_click)]},
+        fallbacks=[CommandHandler('cancel', cancel)]
+    ))
+
+    # জোন সেটিংস কনভারসেশন
+    bot_app.add_handler(ConversationHandler(
+        entry_points=[CommandHandler('addzone', set_zone_handler)],
+        states={S_ZONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_zone)]},
+        fallbacks=[CommandHandler('cancel', cancel)]
+    ))
+
+    # চ্যানেল অ্যাড কনভারসেশন
+    bot_app.add_handler(ConversationHandler(
+        entry_points=[CommandHandler('addchannel', add_ch_handler)],
+        states={
+            CH_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_ch_name)],
+            CH_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_ch_link)]
+        },
+        fallbacks=[CommandHandler('cancel', cancel)]
+    ))
+
+    print("বট চলছে...")
     bot_app.run_polling()
